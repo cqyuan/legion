@@ -694,7 +694,8 @@ if os.getenv('SAVEOBJ') == '1' then
     new_flags:insert("-ludreg")
     link_flags = new_flags
   end
-  regentlib.saveobj(toplevel, "circuit", "executable", bishoplib.make_entry(), link_flags)
+  local exe = os.getenv('OBJNAME') or "circuit_bishop"
+  regentlib.saveobj(toplevel, exe, "executable", bishoplib.make_entry(), link_flags)
 else
   regentlib.start(toplevel, bishoplib.make_entry())
 end

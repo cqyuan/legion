@@ -89,7 +89,9 @@ endif
 ifeq ($(findstring titan,$(shell uname -n)),titan)
 # without this, lapack stuff will link, but generate garbage output - thanks Cray!
 LAPACK_LIBS=-L/opt/acml/5.3.1/gfortran64_fma4/lib -Wl,-rpath=/opt/acml/5.3.1/gfortran64_fma4/lib -lacml
-MARCH=bdver1
+#MARCH=bdver1
+MARCH=barcelona
+CC_FLAGS += -DGASNETI_BUG1389_WORKAROUND=1
 CUDA=${CUDATOOLKIT_HOME}
 CONDUIT=gemini
 GPU_ARCH=k20

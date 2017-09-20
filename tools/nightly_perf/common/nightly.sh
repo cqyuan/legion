@@ -7,7 +7,7 @@ export CC_FLAGS="-std=c++98"
 export DEBUG=0
 
 # Run perf test for each branch
-for branch in master deppart; do
+for branch in performance_test master deppart; do
     if [[ -d _legion_$branch ]]; then
         pushd _legion_$branch
         git pull --ff-only
@@ -19,8 +19,10 @@ for branch in master deppart; do
     fi
     pushd _legion_$branch
     if [[ -d $TERRA_DIR ]]; then
-        ln -s "$TERRA_DIR" language/terra
+        ln -f -s "$TERRA_DIR" language/terra
     fi
-    ./test.py --test=perf
+    command="./test.py --test=perf ${TEST_ARGUMENTS}"
+    echo $command
+    $command
     popd
 done

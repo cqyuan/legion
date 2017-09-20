@@ -1,0 +1,21 @@
+#!/bin/bash
+#PBS -A CSC103
+#PBS -l walltime=01:00:00
+#PBS -l nodes=__MAX_NODES__
+cd $PBS_O_WORKDIR/..
+
+if [[ "__LG_RT_DIR__" == "" ]]
+then
+  echo LG_RT_DIR is not defined
+  exit -1
+fi
+
+export LG_RT_DIR="__LG_RT_DIR__"
+
+source titan_setup.bash
+source env.bash  # defines PERF_ACCESS_TOKEN, DO NOT CHECK env.bash INTO THE REPO
+
+export CI_RUNNER_DESCRIPTION="titan.ccs.ornl.gov"
+
+TEST_ARGUMENTS="__TEST_ARGUMENTS__" LG_RT_DIR="__LG_RT_DIR__" ../common/nightly.sh 
+

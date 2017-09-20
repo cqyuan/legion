@@ -1929,7 +1929,7 @@ if os.getenv('SAVEOBJ') == '1' then
     link_flags = new_flags
   end
 
-  local exe = os.getenv('OBJNAME') or "pennant"
+  local exe = os.getenv('OBJNAME') or "pennant_fast.exe"
   regentlib.saveobj(toplevel, exe, "executable", cpennant.register_mappers, link_flags)
 else
   regentlib.start(toplevel, cpennant.register_mappers)

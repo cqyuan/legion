@@ -104,11 +104,22 @@ def get_measurement(value, argv, output):
     measurement = measurement_types[value['type']]
     return measurement(**strip_type(**value)).measure(argv, output)
 
-def get_variable(name, description):
+def get_variable(name, description, optional=False):
     if name not in os.environ:
-        raise Exception(
-            'Please set environment variable %s to %s' % (name, description))
+        if optional:
+            return ''
+        else:
+            raise Exception(
+                'Please set environment variable %s to %s' % (name, description))
     return os.environ[name]
+
+def remap_path(source_path, perf_execution_dir):
+    run_target = source_path.split('/')
+    run_legion_position = run_target.index('legion')
+    perf_target = perf_execution_dir.split('/')
+    perf_legion_position = perf_target.index('legion')
+    remapped_path = '/'.join((perf_target[:perf_legion_position] + run_target[run_legion_position:]))
+    return remapped_path
 
 def driver():
     # Parse inputs.
@@ -119,7 +130,9 @@ def driver():
         get_variable('PERF_METADATA', 'JSON-encoded metadata'))
     measurements = json.loads(
         get_variable('PERF_MEASUREMENTS', 'JSON-encoded measurements'))
-    launcher = get_variable('PERF_LAUNCHER', 'launcher command').split()
+    perf_launcher = get_variable('PERF_LAUNCHER', 'perf launcher command').split(' ')
+    launcher = get_variable('LAUNCHER', 'process launcher eg aprun', True).split(' ')
+    perf_execution_dir = get_variable('PERF_EXECUTION_DIR', 'execution directory', True)
 
     # Validate inputs.
     if 'benchmark' not in measurements:
@@ -127,15 +140,45 @@ def driver():
     if 'argv' not in measurements:
         raise Exception('Malformed measurements: Measurement "argv" is required')
 
-    # Run command.
-    args = sys.argv[1:]
-    command = launcher + args
+    # Do we need to execute in a special directory?
+    if perf_execution_dir != "":
+        cmd(['mkdir', '-p', perf_execution_dir])
+        lg_rt_dir = os.getenv('LG_RT_DIR')
+        assert lg_rt_dir is not None
+
+        path_list = lg_rt_dir.split('/')
+        legion_position = path_list.index('legion')
+        source_dir = '/'.join(path_list[:legion_position + 1]) 
+        destination_list = perf_execution_dir.split('/')
+        legion_position = destination_list.index('legion')
+        destination_dir = '/'.join(destination_list[:legion_position])
+
+        rsync = cmd(['rsync', '-rLv', '--checksum', source_dir, destination_dir])
+        print(rsync)
+        pwd = cmd(['pwd']).strip()
+        os.chdir(perf_execution_dir)
+        run_invocation = [remap_path(sys.argv[1], perf_execution_dir)] + sys.argv[2:]
+
+    # no special directory
+    else:
+        run_invocation = sys.argv[1:]
+
+    # Run the command
+    command_launcher = ''
+    if perf_launcher != ['']:
+        command_launcher = perf_launcher
+    elif launcher != ['']:
+        command_launcher = launcher
+    command = command_launcher + run_invocation
     output = cmd(command)
+
+    if perf_execution_dir != "":
+        os.chdir(pwd)
 
     # Capture measurements.
     measurement_data = {}
     for key, value in measurements.items():
-        measurement_data[key] = get_measurement(value, args, output)
+        measurement_data[key] = get_measurement(value, run_invocation, output)
 
     # Build result.
     # Move benchmark and argv into metadata from measurements.
