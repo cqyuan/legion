@@ -2054,6 +2054,12 @@ namespace Realm {
 	oas.size = std::min(src_it->size - src_subfield_offset,
 			    dst_it->size - dst_subfield_offset);
 	oas.serdez_id = src_it->serdez_id;
+	// HACK
+	if((oas.serdez_id == 0) && (oas.size == sizeof(size_t)) &&
+	   !getenv("DISABLE_SERDEZ_HACK") &&
+	   (mp.first.kind() == Memory::SYSTEM_MEM) &&
+	   (mp.second.kind() == Memory::SYSTEM_MEM))
+	  oas.serdez_id = 55;
 
 	// This is a little bit of hack: if serdez_id != 0 we directly create a
 	// separate copy plan instead of inserting it into ''oasvec''

@@ -868,9 +868,41 @@ namespace Realm {
 	}
     }
 
+
+  template<typename T>
+  class CopySerdez {
+  public:
+    typedef T FIELD_TYPE;
+    static const size_t PAD = 4;
+    static const size_t MAX_SERIALIZED_SIZE = sizeof(T) + PAD;
+
+    static size_t serialized_size(const FIELD_TYPE& val) {
+      return sizeof(T) + PAD;
+    }
+
+    static size_t serialize(const FIELD_TYPE& val, void *buffer) {
+      memcpy(buffer, &val, sizeof(T));
+      //printf("s: %p %p %g\n", &val, buffer, *(const double *)buffer);
+      return sizeof(T) + PAD;
+    }
+
+    static size_t deserialize(FIELD_TYPE& val, const void *buffer) {
+      //printf("d: %p %p %g\n", &val, buffer, *(const double *)buffer);
+      memcpy(&val, buffer, sizeof(T));
+      return sizeof(T) + PAD;
+    }
+
+    static void destroy(FIELD_TYPE& val) {
+    }
+  };
+
     bool RuntimeImpl::init(int *argc, char ***argv)
     {
       DetailedTimer::init_timers();
+
+      // HACK - remove before checking into master!
+      printf("HACK - adding custom serdez for testing!\n");
+      custom_serdez_table[55] = CustomSerdezUntyped::create_custom_serdez<CopySerdez<size_t> >();
 
       // gasnet_init() must be called before parsing command line arguments, as some
       //  spawners (e.g. the ssh spawner for gasnetrun_ibv) start with bogus args and
