@@ -73,6 +73,7 @@ namespace Legion {
       inline bool has_created_requirements(void) const
         { return !created_requirements.empty(); }
       inline TaskOp* get_owner_task(void) const { return owner_task; }
+      inline bool is_priority_mutable(void) const { return mutable_priority; }
     public:
       // Interface for task contexts
       virtual RegionTreeContext get_context(void) const = 0;
@@ -378,6 +379,9 @@ namespace Legion {
       virtual void find_collective_contributions(DynamicCollective dc,
                                              std::vector<Future> &futures) = 0;
     public:
+      virtual TaskPriority get_current_priority(void) const = 0;
+      virtual void set_current_priority(TaskPriority priority) = 0;
+    public:
       PhysicalRegion get_physical_region(unsigned idx);
       void get_physical_references(unsigned idx, InstanceSet &refs);
     public:
@@ -556,6 +560,7 @@ namespace Legion {
       RtEvent pending_done;
       bool task_executed;
       bool has_inline_accessor;
+      bool mutable_priority;
     protected: 
       bool children_complete_invoked;
       bool children_commit_invoked;
@@ -912,7 +917,7 @@ namespace Legion {
                           InnerContext *previous = NULL);
       virtual InnerContext* find_top_context(void);
     public:
-      void configure_context(MapperManager *mapper);
+      void configure_context(MapperManager *mapper, TaskPriority priority);
       virtual void initialize_region_tree_contexts(
           const std::vector<RegionRequirement> &clone_requirements,
           const std::vector<ApUserEvent> &unmap_events,
@@ -930,6 +935,7 @@ namespace Legion {
       static void handle_create_top_view_response(Deserializer &derez,
                                                    Runtime *runtime);
     public:
+      virtual const std::vector<PhysicalRegion>& begin_task(void);
       virtual void end_task(const void *res, size_t res_size, bool owned);
       virtual void post_end_task(const void *res, size_t res_size, bool owned);
     public:
@@ -950,6 +956,9 @@ namespace Legion {
                                                           const Future &f);
       virtual void find_collective_contributions(DynamicCollective dc,
                                        std::vector<Future> &contributions);
+    public:
+      virtual TaskPriority get_current_priority(void) const;
+      virtual void set_current_priority(TaskPriority priority);
     public:
       static void handle_version_owner_request(Deserializer &derez,
                             Runtime *runtime, AddressSpaceID source);
@@ -1025,6 +1034,10 @@ namespace Legion {
       GenerationID fence_gen;
       ApEvent current_fence_event;
       unsigned current_fence_index;
+    protected:
+      // For managing changing task priorities
+      ApEvent realm_done_event;
+      TaskPriority current_priority;
     protected:
       // For tracking restricted coherence
       std::list<Restriction*> coherence_restrictions;
@@ -1467,6 +1480,9 @@ namespace Legion {
                                                           const Future &f);
       virtual void find_collective_contributions(DynamicCollective dc,
                                              std::vector<Future> &futures);
+    public:
+      virtual TaskPriority get_current_priority(void) const;
+      virtual void set_current_priority(TaskPriority priority);
     };
 
     /**
@@ -1775,6 +1791,9 @@ namespace Legion {
                                                           const Future &f);
       virtual void find_collective_contributions(DynamicCollective dc,
                                              std::vector<Future> &futures);
+    public:
+      virtual TaskPriority get_current_priority(void) const;
+      virtual void set_current_priority(TaskPriority priority);
     protected:
       TaskContext *const enclosing;
       TaskOp *const inline_task;
