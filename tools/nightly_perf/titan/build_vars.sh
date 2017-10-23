@@ -12,6 +12,7 @@ export HOST_CC=gcc
 export HOST_CXX=g++
 
 export USE_GASNET=1
+export USE_LIBDL=0
 export CONDUIT=gemini
 export RDIR=auto
 

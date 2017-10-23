@@ -6,7 +6,7 @@ root_dir="$(readlink -f "$(dirname "${BASH_SOURCE[0]}")")"
 cd "$root_dir"
 
 source "$root_dir"/build_vars.sh
-export GASNET="$root_dir"/gasnet
+export GASNET="$root_dir"/gasnet/release
 export TERRA_DIR="$root_dir"/terra.build
 
 source env.sh # defines PERF_ACCESS_TOKEN
