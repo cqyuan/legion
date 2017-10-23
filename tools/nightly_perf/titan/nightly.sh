@@ -5,7 +5,7 @@ set -e
 root_dir="$(dirname "${BASH_SOURCE[0]}")"
 cd "$root_dir"
 
-source "$root_dir/build_vars"
+source "$root_dir"/build_vars.sh
 
 export TERRA_DIR="$root_dir"/terra
 
