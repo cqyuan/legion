@@ -38,7 +38,7 @@ class LegionDeserializer(object):
         @param[state]:     The state object for our callbacks
         @param[callbacks]: A dictionary containing the callbacks we should use
                            after deserializing each item. You must pass a callback
-                           for 
+                           for
         """
         self.state = state
         self.callbacks = callbacks
@@ -155,7 +155,12 @@ class LegionProfASCIIDeserializer(LegionDeserializer):
             # Keep track of the first and last times
             first_time = 0L
             last_time = 0L
-            for line in log:
+            for i, line in enumerate(log):
+                if i < self.state.last_line:
+                    continue
+
+                print("parsing line {}".format(i))
+
                 if not self.state.has_spy_data and \
                     (legion_spy.config_pat.match(line) or \
                      legion_spy.detailed_config_pat.match(line)):
@@ -176,6 +181,8 @@ class LegionProfASCIIDeserializer(LegionDeserializer):
                     skipped += 1
                     if verbose:
                         print('Skipping line: %s' % line.strip())
+
+                self.state.last_line += 1
         if skipped > 0:
             print('WARNING: Skipped %d lines in %s' % (skipped, filename))
         return matches
@@ -250,7 +257,7 @@ class LegionProfBinaryDeserializer(LegionDeserializer):
             _id = int(m.group('id'))
             params = m.group('params')
             param_data = []
-            
+
             for param_m in LegionProfBinaryDeserializer.params_regex.finditer(params):
                 param_name = param_m.group('param_name')
                 param_type = param_m.group('param_type')
@@ -266,7 +273,7 @@ class LegionProfBinaryDeserializer(LegionDeserializer):
 
         # change the callbacks to be by id
         if not self.callbacks_translated:
-            new_callbacks = {LegionProfBinaryDeserializer.name_to_id[name]: callback 
+            new_callbacks = {LegionProfBinaryDeserializer.name_to_id[name]: callback
                                for name, callback in self.callbacks.iteritems()}
             self.callbacks = new_callbacks
             self.callbacks_translated = True
@@ -299,7 +306,7 @@ class LegionProfBinaryDeserializer(LegionDeserializer):
         try:
             # Try it as a gzip file first
             with getFileObj(filename,compressed=True) as log:
-                return parse_file(log)    
+                return parse_file(log)
         except IOError:
             # If its not a gzip file try a normal file
             with getFileObj(filename,compressed=False) as log:
