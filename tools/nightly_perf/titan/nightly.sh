@@ -2,12 +2,12 @@
 
 set -e
 
-root_dir="$(dirname "${BASH_SOURCE[0]}")"
+root_dir="$(readlink -f "$(dirname "${BASH_SOURCE[0]}")")"
 cd "$root_dir"
 
 source "$root_dir"/build_vars.sh
-
-export TERRA_DIR="$root_dir"/terra
+export GASNET="$root_dir"/gasnet
+export TERRA_DIR="$root_dir"/terra.build
 
 source env.sh # defines PERF_ACCESS_TOKEN
 
