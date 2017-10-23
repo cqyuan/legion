@@ -28,6 +28,8 @@ from operator import itemgetter
 from os.path import dirname, exists, basename
 from legion_serializer import LegionProfASCIIDeserializer, LegionProfBinaryDeserializer, GetFileTypeInfo
 
+import time
+
 # Make sure this is up to date with lowlevel.h
 processor_kinds = {
     1 : 'GPU',
@@ -313,6 +315,7 @@ class Processor(object):
         self.tasks = list()
         self.max_levels = 0
         self.time_points = list()
+        self.last_time_point = 0
         self.util_time_points = list()
 
     def get_short_text(self):
@@ -338,7 +341,11 @@ class Processor(object):
         self.tasks.append(call)
 
     def sort_time_range(self):
-        for task in self.tasks:
+        for i, task in enumerate(self.tasks):
+            if i < self.last_time_point:
+                continue
+            self.last_time_point += 1
+
             self.time_points.append(TimePoint(task.start, task, True))
             self.time_points.append(TimePoint(task.stop, task, False))
 
@@ -355,6 +362,7 @@ class Processor(object):
         self.util_time_points.sort(key=lambda p: p.time_key)
         self.time_points.sort(key=lambda p: p.time_key)
         free_levels = set()
+        self.max_levels = 0
         for point in self.time_points:
             if point.first:
                 if free_levels:
@@ -471,6 +479,7 @@ class Memory(object):
         self.capacity = capacity
         self.instances = set()
         self.time_points = list()
+        self.last_time_point = 0
         self.max_live_instances = None
         self.last_time = None
 
@@ -490,7 +499,11 @@ class Memory(object):
 
     def sort_time_range(self):
         self.max_live_instances = 0
-        for inst in self.instances:
+        for i, inst in enumerate(self.instances):
+            if i < self.last_time_point:
+                continue
+            self.last_time_point += 1
+
             self.time_points.append(TimePoint(inst.start, inst, True))
             self.time_points.append(TimePoint(inst.stop, inst, False))
         # Keep track of which levels are free
@@ -577,6 +590,7 @@ class Channel(object):
         self.dst = dst
         self.copies = set()
         self.time_points = list()
+        self.last_time_point = 0
         self.max_live_copies = None
         self.last_time = None
 
@@ -597,7 +611,11 @@ class Channel(object):
 
     def sort_time_range(self):
         self.max_live_copies = 0
-        for copy in self.copies:
+        for i, copy in enumerate(self.copies):
+            if i < self.last_time_point:
+                continue
+            self.last_time_point += 1
+
             self.time_points.append(TimePoint(copy.start, copy, True))
             self.time_points.append(TimePoint(copy.stop, copy, False))
         # Keep track of which levels are free
@@ -797,11 +815,13 @@ class Variant(StatObject):
         self.task_kind = task_kind
 
     def compute_color(self, step, num_steps):
-        assert self.color is None
+        if self.color != None:
+            return
         self.color = color_helper(step, num_steps)
 
     def assign_color(self, color):
-        assert self.color is None
+        if self.color != None:
+            return
         self.color = color
 
     def __repr__(self):
@@ -841,7 +861,8 @@ class Operation(Base):
         self.proc = None
 
     def assign_color(self, color_map):
-        assert self.color is None
+        if self.color != None:
+            return
         if self.kind is None:
             self.color = '#000000' # Black
         else:
@@ -1003,8 +1024,10 @@ class Task(Operation, TimeRange, HasDependencies, HasWaiters):
         self.is_task = True
 
     def assign_color(self, color):
-        assert self.color is None
-        assert self.base_op.color is None
+        if self.color != None:
+            return
+        if self.base_op.color != None:
+            return
         assert self.variant is not None
         assert self.variant.color is not None
         self.color = self.variant.color
@@ -1376,7 +1399,8 @@ class MessageKind(StatObject):
         return self.message_id == other.message_id
 
     def assign_color(self, color):
-        assert self.color is None
+        if self.color != None:
+            return
         self.color = color
 
     def __repr__(self):
@@ -1436,7 +1460,8 @@ class MapperCallKind(StatObject):
         return self.name
 
     def assign_color(self, color):
-        assert self.color is None
+        if self.color != None:
+            return
         self.color = color
 
 class MapperCall(Base, TimeRange, HasInitiationDependencies):
@@ -1501,7 +1526,8 @@ class RuntimeCallKind(StatObject):
         return self.runtime_call_kind == other.runtime_call_kind
 
     def assign_color(self, color):
-        assert self.color is None
+        if self.color != None:
+            return
         self.color = color
 
     def __repr__(self):
@@ -2884,41 +2910,47 @@ def main():
             has_binary_files = True
             break
 
-    for file_name in file_names:
-        deserializer = None
-        file_type, version = GetFileTypeInfo(file_name)
-        if file_type == "binary":
-            deserializer = binaryDeserializer
+    while (True):
+        for file_name in file_names:
+            deserializer = None
+            file_type, version = GetFileTypeInfo(file_name)
+            if file_type == "binary":
+                deserializer = binaryDeserializer
+            else:
+                deserializer = asciiDeserializer
+            if has_binary_files == False or file_type == "binary":
+                # only parse the log if it's a binary file, or if all the files
+                # are ascii files
+                print('Reading log file %s...' % file_name)
+                total_matches = deserializer.parse(file_name, verbose)
+                print('Matched %s objects' % total_matches)
+                if total_matches > 0:
+                    has_matches = True
+            else:
+                # In this case, we have an ascii file passed in but we also have
+                # binary files. All we need to do is check if it has legion spy
+                # data
+                deserializer.search_for_spy_data(file_name)
+
+        if not has_matches:
+            print('No matches found! Exiting...')
+            return
+
+        # Once we are done loading everything, do the sorting
+        state.sort_time_ranges()
+
+        if print_stats:
+            state.print_stats(verbose)
         else:
-            deserializer = asciiDeserializer
-        if has_binary_files == False or file_type == "binary":
-            # only parse the log if it's a binary file, or if all the files
-            # are ascii files
-            print('Reading log file %s...' % file_name)
-            total_matches = deserializer.parse(file_name, verbose)
-            print('Matched %s objects' % total_matches)
-            if total_matches > 0:
-                has_matches = True
-        else:
-            # In this case, we have an ascii file passed in but we also have
-            # binary files. All we need to do is check if it has legion spy
-            # data
-            deserializer.search_for_spy_data(file_name)
+            # state.emit_interactive_visualization(output_dirname, show_procs,
+            #                      file_names, show_channels, show_instances, force)
+            state.emit_interactive_visualization(output_dirname, show_procs,
+                                 file_names, show_channels, show_instances, True)
+            if show_copy_matrix:
+                state.show_copy_matrix(copy_output_prefix)
 
-    if not has_matches:
-        print('No matches found! Exiting...')
-        return
-
-    # Once we are done loading everything, do the sorting
-    state.sort_time_ranges()
-
-    if print_stats:
-        state.print_stats(verbose)
-    else:
-        state.emit_interactive_visualization(output_dirname, show_procs,
-                             file_names, show_channels, show_instances, force)
-        if show_copy_matrix:
-            state.show_copy_matrix(copy_output_prefix)
+        time.sleep(2)
+        print("looped through once")
 
 if __name__ == '__main__':
     start = time.time()
