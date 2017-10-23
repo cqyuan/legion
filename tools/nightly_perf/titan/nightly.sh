@@ -1,26 +1,21 @@
 #!/bin/bash
 
-#set -e
-
-export MAX_NODES=1
+set -e
 
 root_dir="$(dirname "${BASH_SOURCE[0]}")"
-cd "${root_dir}"
+cd "$root_dir"
 
-if [[ "${LG_RT_DIR}" == "" ]]
-then
-  echo LG_RT_DIR is not defined
-  exit -1
-fi
+source "$root_dir/build_vars"
 
-cat nightly.script \
-	| sed -e "s/__MAX_NODES__/${MAX_NODES}/" \
-	| sed -e "s/__TEST_ARGUMENTS__/--perf_max_nodes=1 --perf_min_nodes=1/" \
-	| sed -e "s:__LG_RT_DIR__:${LG_RT_DIR}:g" \
-	> n.script
+export TERRA_DIR="$root_dir"/terra
 
-mkdir -p log
-pushd log
-qsub ../n.script
-popd
+source env.sh # defines PERF_ACCESS_TOKEN
 
+export CI_RUNNER_DESCRIPTION="titan.ccs.ornl.gov"
+
+export PERF_CORES_PER_NODE=12
+export PERF_EXECUTION_DIR="$MEMBERWORK/csc103/nightly"
+export PERF_REGENT_STANDALONE=1
+export LAUNCHER="aprun"
+
+../common/nightly.sh
