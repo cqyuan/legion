@@ -96,7 +96,7 @@ def get_legion_cxx_perf_tests(nodes, cores_per_node):
     return [
         # Circuit: Heavy Compute
         ['examples/circuit/circuit',
-         ['-l', '10', '-p', cores_per_node * nodes, '-npp', '2500', '-wpp', '10000', '-ll:cpu', cores_per_node]],
+         ['-l', '10', '-p', str(cores_per_node * nodes), '-npp', '2500', '-wpp', '10000', '-ll:cpu', str(cores_per_node)]],
 
         # Circuit: Light Compute
         ['examples/circuit/circuit',
@@ -107,8 +107,8 @@ def get_regent_perf_tests(nodes, cores_per_node):
     return [
         # Circuit: Heavy Compute
         ['language/examples/circuit_sparse.rg',
-         ['-l', '10', '-p', nodes * cores_per_node, '-npp', '2500', '-wpp', '10000', '-ll:cpu', cores_per_node,
-          '-fflow-spmd-shardsize', cores_per_node]],
+         ['-l', '10', '-p', str(nodes * cores_per_node), '-npp', '2500', '-wpp', '10000', '-ll:cpu', str(cores_per_node),
+          '-fflow-spmd-shardsize', str(cores_per_node)]],
 
         # Circuit: Light Compute
         ['language/examples/circuit_sparse.rg',
@@ -119,8 +119,8 @@ def get_regent_perf_tests(nodes, cores_per_node):
         ['language/examples/pennant_fast.rg',
          ['pennant.tests/sedovbig3x30/sedovbig.pnt',
           '-seq_init', '0', '-par_init', '1', '-print_ts', '1', '-prune', '5',
-          '-npieces', nodes * cores_per_node, '-numpcx', '1', '-numpcy', nodes * cores_per_node,
-          '-ll:csize', '8192', '-ll:cpu', cores_per_node, '-fflow-spmd-shardsize', cores_per_node,
+          '-npieces', str(nodes * cores_per_node), '-numpcx', '1', '-numpcy', str(nodes * cores_per_node),
+          '-ll:csize', '8192', '-ll:cpu', str(cores_per_node), '-fflow-spmd-shardsize', str(cores_per_node),
           '-fvectorize-unsafe', '1']],
     ]
 
@@ -324,7 +324,7 @@ def run_test_perf_one_configuration(launcher, root_dir, tmp_dir, bin_dir, env, t
     flags = ['-logfile', 'out_%.log']
 
     # for backward-compatibility, use app_cores if PERF_CORES_PER_NODE is not specified
-    cores_per_node = os.environ.get('PERF_CORES_PER_NODE', str(app_cores))
+    cores_per_node = int(os.environ.get('PERF_CORES_PER_NODE', app_cores))
 
     legion_cxx_perf_tests = get_legion_cxx_perf_tests(nodes, cores_per_node)
     regent_perf_tests = get_regent_perf_tests(nodes, cores_per_node)
@@ -633,10 +633,10 @@ def run_tests(test_modules=None,
     if test_perf:
         if 'PERF_MIN_NODES' not in os.environ:
             raise Exception('Performance tests requested but PERF_MIN_NODES is not set')
-        min_nodes = os.environ['PERF_MIN_NODES']
+        min_nodes = int(os.environ['PERF_MIN_NODES'])
         if 'PERF_MAX_NODES' not in os.environ:
             raise Exception('Performance tests requested but PERF_MAX_NODES is not set')
-        max_nodes = os.environ['PERF_MAX_NODES']
+        max_nodes = int(os.environ['PERF_MAX_NODES'])
 
     if test_perf and debug:
         raise Exception('Performance tests requested but DEBUG is enabled')
