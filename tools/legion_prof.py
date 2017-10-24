@@ -1030,10 +1030,9 @@ class Task(Operation, TimeRange, HasDependencies, HasWaiters):
         self.is_task = True
 
     def assign_color(self, color):
-        if self.color != None:
+        if self.color != None and self.base_op.color != None:
             return
-        if self.base_op.color != None:
-            return
+
         assert self.variant is not None
         assert self.variant.color is not None
         self.color = self.variant.color
