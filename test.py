@@ -33,9 +33,6 @@ else:
 # available physical cores.
 app_cores = max(physical_cores - 2, 1)
 
-# for backward-compatibility, use app_cores if PERF_CORES_PER_NODE is not specified
-perf_cores_per_node = os.environ.get('PERF_CORES_PER_NODE', str(app_cores))
-
 legion_cxx_tests = [
     # Tutorial
     ['tutorial/00_hello_world/hello_world', []],
@@ -95,15 +92,44 @@ legion_hdf_cxx_tests = [
     ['test/hdf_attach_subregion_parallel/hdf_attach_subregion_parallel', ['-ll:cpu', '4']],
 ]
 
+def legion_cxx_perf_tests(nodes, cores_per_node):
+    return [
+        # Circuit: Heavy Compute
+        ['examples/circuit/circuit',
+         ['-l', '10', '-p', cores_per_node * nodes, '-npp', '2500', '-wpp', '10000', '-ll:cpu', cores_per_node]],
+
+        # Circuit: Light Compute
+        ['examples/circuit/circuit',
+         ['-l', '10', '-p', '100', '-npp', '2', '-wpp', '4', '-ll:cpu', '2']],
+    ]
+
+def get_regent_perf_tests(nodes, cores_per_node):
+    return [
+        # Circuit: Heavy Compute
+        ['language/examples/circuit_sparse.rg',
+         ['-l', '10', '-p', nodes * cores_per_node, '-npp', '2500', '-wpp', '10000', '-ll:cpu', cores_per_node,
+          '-fflow-spmd-shardsize', cores_per_node]],
+
+        # Circuit: Light Compute
+        ['language/examples/circuit_sparse.rg',
+         ['-l', '10', '-p', '100', '-npp', '2', '-wpp', '4', '-ll:cpu', '2',
+          '-fflow-spmd-shardsize', '2']],
+
+        # PENNANT: Heavy Compute
+        ['language/examples/pennant_fast.rg',
+         ['pennant.tests/sedovbig3x30/sedovbig.pnt',
+          '-seq_init', '0', '-par_init', '1', '-print_ts', '1', '-prune', '5',
+          '-npieces', nodes * cores_per_node, '-numpcx', '1', '-numpcy', nodes * cores_per_node,
+          '-ll:csize', '8192', '-ll:cpu', cores_per_node, '-fflow-spmd-shardsize', cores_per_node,
+          '-fvectorize-unsafe', '1']],
+    ]
 
 def cmd(command, env=None, cwd=None):
     print(' '.join(command))
-    sys.stdout.flush()
     return subprocess.check_call(command, env=env, cwd=cwd)
 
 def run_test_regent(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
     cmd([os.path.join(root_dir, 'language/travis.py')], env=env)
-
 
 def run_cxx(tests, flags, launcher, root_dir, bin_dir, env, thread_count):
     for test_file, test_flags in tests:
@@ -119,25 +145,30 @@ def run_cxx(tests, flags, launcher, root_dir, bin_dir, env, thread_count):
         if not bin_dir:
             cmd(['find', test_dir , '-type', 'f', '(', '-name', '*.a', '-o', '-name', os.path.basename(test_file), ')', '-exec', 'rm', '-v', '{}', ';'])
 
-def dumpenv(env, title, all=False):
-    print('env', title)
-    for (k, v) in env.iteritems():
-        if all or k.startswith('PERF') or k.startswith('LAUNCH') or k.startswith('OBJ') or k.startswith('SAV') or k.startswith('LD_LIBRARY'):
-            print('export', k + "='" + v + "'")
-
-
 def run_regent(tests, flags, launcher, root_dir, env, thread_count):
     for test_file, test_flags in tests:
         test_dir = os.path.dirname(os.path.join(root_dir, test_file))
         test_path = os.path.join(root_dir, test_file)
 
-        # if we are building for standalone execution
-        if 'SAVEOBJ' in env.keys() and env['SAVEOBJ'] == '1':
-            source = test_file.split('/')[-1]
-            exe = source.replace('.rg', '.exe')
-            env['OBJNAME'] = exe
+        cmd(launcher + [test_path] + flags + test_flags, env=env, cwd=test_dir)
+
+def precompile_regent(tests, flags, launcher, root_dir, scratch_dir, env, thread_count):
+    exe_tests = []
+    for test_file, test_flags in tests:
+        test_dir = os.path.dirname(os.path.join(root_dir, test_file))
+        test_path = os.path.join(root_dir, test_file)
+
+        exe_dir = test_dir
+        if scratch_dir is not None:
+            exe_dir = tempfile.mkdtemp(dir=scratch_dir)
+
+        exe = os.path.join(exe_dir, os.path.basename(os.path.splitext(source) + '.exe'))
+        env = dict(list(env.items()) + [('OBJNAME', exe)])
 
         cmd(launcher + [test_path] + flags + test_flags, env=env, cwd=test_dir)
+
+        exe_tests.append([exe, test_flags])
+    return exe_tests
 
 def run_test_legion_cxx(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
     flags = ['-logfile', 'out_%.log']
@@ -281,12 +312,6 @@ def git_branch_name(repo_dir):
         return output.strip()
     return None
 
-def launcher_with_nodes(perf_launcher, nodes):
-    if 'aprun' in perf_launcher:
-        return perf_launcher + ['-n', str(nodes)]
-    else:
-        return perf_launcher
-
 def remap_path(source_path, perf_execution_dir):
     source_target = source_path.split('/')
     source_legion_position = source_target.index('legion')
@@ -295,44 +320,17 @@ def remap_path(source_path, perf_execution_dir):
     remapped_path = '/'.join(perf_target[:perf_legion_position] + source_target[source_legion_position:])
     return remapped_path
 
-def run_test_perf(launcher, root_dir, tmp_dir, bin_dir, env, thread_count):
-    nodes = int(env['PERF_MIN_NODES'])
-    while nodes <= int(env['PERF_MAX_NODES']):
-        launcher = launcher_with_nodes(launcher, nodes) 
-        run_test_perf_one_configuration(launcher, root_dir, tmp_dir, bin_dir, env, thread_count, nodes)
-        nodes = nodes * 2
-
 def run_test_perf_one_configuration(launcher, root_dir, tmp_dir, bin_dir, env, thread_count, nodes):
     flags = ['-logfile', 'out_%.log']
-    legion_cxx_perf_tests = [
-        # Circuit: Heavy Compute
-        ['examples/circuit/circuit',
-         ['-l', '10', '-p', perf_cores_per_node * nodes, '-npp', '2500', '-wpp', '10000', '-ll:cpu', perf_cores_per_node]],
 
-        # Circuit: Light Compute
-        ['examples/circuit/circuit',
-         ['-l', '10', '-p', '100', '-npp', '2', '-wpp', '4', '-ll:cpu', '2']],
-    ]
+    # for backward-compatibility, use app_cores if PERF_CORES_PER_NODE is not specified
+    cores_per_node = os.environ.get('PERF_CORES_PER_NODE', str(app_cores))
 
-    regent_perf_tests = [
-        # Circuit: Heavy Compute
-        ['language/examples/circuit_sparse.rg',
-         ['-l', '10', '-p', perf_cores_per_node * nodes, '-npp', '2500', '-wpp', '10000', '-ll:cpu', perf_cores_per_node,
-          '-fflow-spmd-shardsize', perf_cores_per_node]],
+    legion_cxx_perf_tests = get_legion_cxx_perf_tests(nodes, cores_per_node)
+    regent_perf_tests = get_regent_perf_tests(nodes, cores_per_node)
 
-        # Circuit: Light Compute
-        ['language/examples/circuit_sparse.rg',
-         ['-l', '10', '-p', '100', '-npp', '2', '-wpp', '4', '-ll:cpu', '2',
-          '-fflow-spmd-shardsize', '2']],
-
-        # PENNANT: Heavy Compute
-        ['language/examples/pennant_fast.rg',
-         ['pennant.tests/sedovbig3x30/sedovbig.pnt',
-          '-seq_init', '0', '-par_init', '1', '-print_ts', '1', '-prune', '5',
-          '-npieces', perf_cores_per_node, '-numpcx', '1', '-numpcy', perf_cores_per_node,
-          '-ll:csize', '8192', '-ll:cpu', perf_cores_per_node, '-fflow-spmd-shardsize', perf_cores_per_node,
-          '-fvectorize-unsafe', '1']],
-    ]
+    # Regent needs special flags when in precompile mode
+    precompile = os.environ.get('PERF_PRECOMPILE_REGENT') == '1'
 
     # Performance test configuration:
     metadata = {
@@ -383,8 +381,6 @@ def run_test_perf_one_configuration(launcher, root_dir, tmp_dir, bin_dir, env, t
             ],
         }
     }
-
-
     env = dict(list(env.items()) + [
         ('PERF_OWNER', 'StanfordLegion'),
         ('PERF_REPOSITORY', 'perf-data'),
@@ -399,15 +395,9 @@ def run_test_perf_one_configuration(launcher, root_dir, tmp_dir, bin_dir, env, t
     regent_env = dict(list(env.items()) + [
         ('PERF_MEASUREMENTS', json.dumps(regent_measurements)),
         # Launch through regent.py
-        ('PERF_LAUNCHER', ''),
-        ('LAUNCHER', ' '.join(launcher)),
+        ('PERF_LAUNCHER', ' '.join('launcher') if precompile else ''),
+        ('LAUNCHER', '' if precompile else ' '.join(launcher)),
     ])
-    regent_build_env = dict(list(env.items()) + [
-        # Launch through regent.py
-        ('SAVEOBJ', '1'),
-    ])
-
-    del regent_build_env['LAUNCHER']
 
     # Build Regent first to avoid recompiling later.
     cmd([os.path.join(root_dir, 'language/travis.py'), '--install-only'], env=env)
@@ -416,34 +406,21 @@ def run_test_perf_one_configuration(launcher, root_dir, tmp_dir, bin_dir, env, t
     runner = os.path.join(root_dir, 'perf.py')
     run_cxx(legion_cxx_perf_tests, flags, [runner], root_dir, bin_dir, cxx_env, thread_count)
 
-    # Prebuild Regent executables if called for
-    regent_path = os.path.join(root_dir, 'language/regent.py')
-    perf_regent_standalone = os.getenv('PERF_REGENT_STANDALONE')
-    perf_execution_dir = os.getenv('PERF_EXECUTION_DIR')
-
-    if perf_regent_standalone is not None:
-        # build standalone executable
-        run_regent(regent_perf_tests, [], [regent_path], root_dir, regent_build_env, thread_count)
-        regent_perf_executables = []
-        for test_file, test_flags in regent_perf_tests:
-            test_executable = test_file.replace('.rg', '.exe')
-            regent_perf_executables = regent_perf_executables + [ ( test_executable, test_flags ) ]
-        # LD_LIBRARY_PATH needs to reflect target paths
-        ld_library_path = ''
-        if 'LD_LIBRARY_PATH' in env.keys():
-            ld_library_path = env['LD_LIBRARY_PATH'] + ':'
-        new_dir = remap_path(root_dir, perf_execution_dir)
-        ld_library_path = ld_library_path + new_dir + "/language/examples"
-        ld_library_path = ld_library_path + ':' + new_dir + "/bindings/terra/"
-        regent_env['LD_LIBRARY_PATH'] = ld_library_path
-        print('Using perf execution dir', perf_execution_dir)
-        print()
-
-        run_regent(regent_perf_executables, [], [runner], root_dir, regent_env, thread_count)
-
     # Run Regent performance tests.
-    # FIXME: PENNANT can't handle the -logfile flag coming first, so just skip it.
+    regent_path = os.path.join(root_dir, 'language/regent.py')
+    if precompile:
+        # Precompile executables.
+        build_env = dict(list(env.items()) + [
+            ('SAVEOBJ', '1'),
+            ('LAUNCHER', ''),
+        ])
+        scratch_dir = os.environ.get('PERF_SCRATCH_DIR')
+        exe_tests = precompile_regent(regent_perf_tests, [], [regent_path], root_dir, scratch_dir, build_env, thread_count)
+
+        # FIXME: PENNANT can't handle the -logfile flag coming first, so just skip it.
+        run_regent(regent_perf_executables, [], [runner], root_dir, regent_env, thread_count)
     else:
+        # FIXME: PENNANT can't handle the -logfile flag coming first, so just skip it.
         run_regent(regent_perf_tests, [], [runner, regent_path], root_dir, regent_env, thread_count)
 
     # Render the final charts.
@@ -452,6 +429,13 @@ def run_test_perf_one_configuration(launcher, root_dir, tmp_dir, bin_dir, env, t
          'https://github.com/StanfordLegion/perf-data.git',
          'https://github.com/StanfordLegion/perf-data.git'],
         env=env)
+
+def run_test_perf(launcher, root_dir, tmp_dir, bin_dir, env, thread_count, min_nodes, max_nodes):
+    nodes = min_nodes
+    while nodes <= max_nodes:
+        launcher = [w.format(**{'NODES': nodes}) for w in launcher]
+        run_test_perf_one_configuration(launcher, root_dir, tmp_dir, bin_dir, env, thread_count, nodes)
+        nodes *= 2
 
 def check_test_legion_cxx(root_dir):
     print('Checking that tests that SHOULD be tested are ACTUALLY tested...')
@@ -608,14 +592,11 @@ def run_tests(test_modules=None,
               debug=True,
               use_features=None,
               launcher=None,
-              perf_min_nodes=1,
-              perf_max_nodes=1,
               thread_count=None,
               root_dir=None,
               check_ownership=False,
               keep_tmp_dir=False,
               verbose=False):
-
     if thread_count is None:
         thread_count = multiprocessing.cpu_count()
 
@@ -648,6 +629,15 @@ def run_tests(test_modules=None,
     use_cmake = feature_enabled('cmake', False)
     use_rdir = feature_enabled('rdir', True)
 
+    # Determine parameters for performance tests.
+    if test_perf:
+        if 'PERF_MIN_NODES' not in os.environ:
+            raise Exception('Performance tests requested but PERF_MIN_NODES is not set')
+        min_nodes = os.environ['PERF_MIN_NODES']
+        if 'PERF_MAX_NODES' not in os.environ:
+            raise Exception('Performance tests requested but PERF_MAX_NODES is not set')
+        max_nodes = os.environ['PERF_MAX_NODES']
+
     if test_perf and debug:
         raise Exception('Performance tests requested but DEBUG is enabled')
 
@@ -677,8 +667,6 @@ def run_tests(test_modules=None,
         ('TEST_SPY', '1' if use_spy else '0'),
         ('TEST_GCOV', '1' if use_gcov else '0'),
         ('USE_RDIR', '1' if use_rdir else '0'),
-        ('PERF_MIN_NODES', perf_min_nodes),
-        ('PERF_MAX_NODES', perf_max_nodes),
         ('LG_RT_DIR', os.path.join(root_dir, 'runtime'))] + (
 
         # Gcov doesn't get a USE_GCOV flag, but instead stuff the GCC
@@ -747,7 +735,7 @@ def run_tests(test_modules=None,
                 run_test_private(launcher, root_dir, tmp_dir, bin_dir, env, thread_count)
         if test_perf:
             with Stage('perf'):
-                run_test_perf(launcher, root_dir, tmp_dir, bin_dir, env, thread_count)
+                run_test_perf(launcher, root_dir, tmp_dir, bin_dir, env, thread_count, min_nodes, max_nodes)
         if test_ctest:
             with Stage('ctest'):
                 run_test_ctest(launcher, root_dir, tmp_dir, bin_dir, env, thread_count)
@@ -827,14 +815,6 @@ def driver():
         '--launcher', dest='launcher', action='store',
         default=os.environ['LAUNCHER'] if 'LAUNCHER' in os.environ else None,
         help='Launcher for Legion tests (also via LAUNCHER).')
-
-    parser.add_argument(
-        '--perf_min_nodes', dest='perf_min_nodes', action='store', default='1',
-        help='Min nodes for performance scaling runs')
-
-    parser.add_argument(
-        '--perf_max_nodes', dest='perf_max_nodes', action='store', default='1',
-        help='Max nodes for performance scaling runs')
 
     parser.add_argument(
         '-C', '--directory', dest='root_dir', metavar='DIR', action='store', required=False,
