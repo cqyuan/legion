@@ -92,7 +92,7 @@ legion_hdf_cxx_tests = [
     ['test/hdf_attach_subregion_parallel/hdf_attach_subregion_parallel', ['-ll:cpu', '4']],
 ]
 
-def legion_cxx_perf_tests(nodes, cores_per_node):
+def get_legion_cxx_perf_tests(nodes, cores_per_node):
     return [
         # Circuit: Heavy Compute
         ['examples/circuit/circuit',
