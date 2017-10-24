@@ -28,7 +28,7 @@ from operator import itemgetter
 from os.path import dirname, exists, basename
 from legion_serializer import LegionProfASCIIDeserializer, LegionProfBinaryDeserializer, GetFileTypeInfo
 
-import time
+import time as pytime
 
 # Make sure this is up to date with lowlevel.h
 processor_kinds = {
@@ -500,9 +500,15 @@ class Memory(object):
     def sort_time_range(self):
         self.max_live_instances = 0
         for i, inst in enumerate(self.instances):
+            # If we've already parsed this entry, skip it
             if i < self.last_time_point:
                 continue
             self.last_time_point += 1
+
+            # If an instance hasn't yet been associated with a time,
+            # skip it for now and populate it later.
+            if inst.start == None:
+                continue
 
             self.time_points.append(TimePoint(inst.start, inst, True))
             self.time_points.append(TimePoint(inst.stop, inst, False))
@@ -2949,7 +2955,7 @@ def main():
             if show_copy_matrix:
                 state.show_copy_matrix(copy_output_prefix)
 
-        time.sleep(2)
+        pytime.sleep(2)
         print("looped through once")
 
 if __name__ == '__main__':
