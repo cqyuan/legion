@@ -395,7 +395,7 @@ def run_test_perf_one_configuration(launcher, root_dir, tmp_dir, bin_dir, env, t
     regent_env = dict(list(env.items()) + [
         ('PERF_MEASUREMENTS', json.dumps(regent_measurements)),
         # Launch through regent.py
-        ('PERF_LAUNCHER', ' '.join('launcher') if precompile else ''),
+        ('PERF_LAUNCHER', ' '.join(launcher) if precompile else ''),
         ('LAUNCHER', '' if precompile else ' '.join(launcher)),
     ])
 
