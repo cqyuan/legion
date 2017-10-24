@@ -418,7 +418,7 @@ def run_test_perf_one_configuration(launcher, root_dir, tmp_dir, bin_dir, env, t
         exe_tests = precompile_regent(regent_perf_tests, [], [regent_path], root_dir, scratch_dir, build_env, thread_count)
 
         # FIXME: PENNANT can't handle the -logfile flag coming first, so just skip it.
-        run_regent(regent_perf_executables, [], [runner], root_dir, regent_env, thread_count)
+        run_regent(exe_tests, [], [runner], root_dir, regent_env, thread_count)
     else:
         # FIXME: PENNANT can't handle the -logfile flag coming first, so just skip it.
         run_regent(regent_perf_tests, [], [runner, regent_path], root_dir, regent_env, thread_count)
