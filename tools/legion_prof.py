@@ -2689,18 +2689,7 @@ class State(object):
     def emit_interactive_visualization(self, output_dirname, show_procs,
                                file_names, show_channels, show_instances, force):
         self.assign_colors()
-        # the output directory will either be overwritten, or we will find
-        # a new unique name to create new logs
-        if force and exists(output_dirname):
-            print("forcing removal of " + output_dirname)
-            shutil.rmtree(output_dirname)
-        else:
-            output_dirname = self.find_unique_dirname(output_dirname)
 
-        print('Generating interactive visualization files in directory ' + output_dirname)
-        src_directory = os.path.join(dirname(sys.argv[0]), "legion_prof_files")
-
-        shutil.copytree(src_directory, output_dirname)
 
         proc_list = []
         chan_list = []
@@ -2727,7 +2716,8 @@ class State(object):
 
         tsv_dir = os.path.join(output_dirname, "tsv")
         json_dir = os.path.join(output_dirname, "json")
-        os.mkdir(tsv_dir)
+        if not exists(tsv_dir):
+            os.mkdir(tsv_dir)
         if not exists(json_dir):
             os.mkdir(json_dir)
 
@@ -2856,6 +2846,20 @@ class State(object):
         with open(scale_json_file_name, "w") as scale_json_file:
             json.dump(scale_data, scale_json_file)
 
+    def copy_viz_files(self, output_dirname, force):
+        # the output directory will either be overwritten, or we will find
+        # a new unique name to create new logs
+        if force and exists(output_dirname):
+            print("forcing removal of " + output_dirname)
+            shutil.rmtree(output_dirname)
+        else:
+            output_dirname = self.find_unique_dirname(output_dirname)
+
+        print('Generating interactive visualization files in directory ' + output_dirname)
+        src_directory = os.path.join(dirname(sys.argv[0]), "legion_prof_files")
+
+        shutil.copytree(src_directory, output_dirname)
+
 def main():
     class MyParser(argparse.ArgumentParser):
         def error(self, message):
@@ -2915,6 +2919,11 @@ def main():
             has_binary_files = True
             break
 
+
+    # Set up files for the visualizer
+    if not print_stats:
+        state.copy_viz_files(output_dirname, True)
+
     while (True):
         for file_name in file_names:
             deserializer = None
@@ -2955,6 +2964,7 @@ def main():
                 state.show_copy_matrix(copy_output_prefix)
 
         pytime.sleep(2)
+        # raw_input()
         print("looped through once")
 
 if __name__ == '__main__':

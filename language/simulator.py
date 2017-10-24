@@ -12,5 +12,5 @@ i = 0
 while (True):
     with open('circuit_log_live', 'a') as f:
         f.write(lines[i])
-    time.sleep(0.01)
+    time.sleep(0.02)
     i += 1
