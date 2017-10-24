@@ -162,7 +162,7 @@ def precompile_regent(tests, flags, launcher, root_dir, scratch_dir, env, thread
         if scratch_dir is not None:
             exe_dir = tempfile.mkdtemp(dir=scratch_dir)
 
-        exe = os.path.join(exe_dir, os.path.basename(os.path.splitext(source) + '.exe'))
+        exe = os.path.join(exe_dir, os.path.basename(os.path.splitext(test_file)[0] + '.exe'))
         env = dict(list(env.items()) + [('OBJNAME', exe)])
 
         cmd(launcher + [test_path] + flags + test_flags, env=env, cwd=test_dir)
