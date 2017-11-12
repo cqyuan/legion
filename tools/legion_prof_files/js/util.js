@@ -154,7 +154,7 @@ function binarySearch(data, level, time, useStart) {
   var high = data[level].length;
   while (true) {
     // ugh is there a way to do integer division in javascrtipt?
-    var mid = Math.floor((high - low) / 2) + low; 
+    var mid = Math.floor((high - low) / 2) + low;
 
     // In this case, we haven't found it. This is as close
     // as we were able to get.
@@ -184,6 +184,7 @@ function binarySearch(data, level, time, useStart) {
 }
 
 function filterAndMergeBlocks(state) {
+  console.log("filter and merge");
   var windowStart = $("#timeline").scrollLeft();
   var windowEnd = windowStart + $("#timeline").width();
   state.dataToDraw = Array();
@@ -216,7 +217,7 @@ function filterAndMergeBlocks(state) {
             // don't do this if we're the subject of the current search and don't merge with
             // something that is
             if (!state.searchEnabled || searchRegex[currentPos].exec(d.title) == null) {
-              while (((i + count) < items[level].length) && 
+              while (((i + count) < items[level].length) &&
                      ((items[level][i + count].start - end) < min_gap_time) &&
                      ((items[level][i + count].end - items[level][i + count].start) < min_feature_time) &&
                      (!state.searchEnabled || searchRegex[currentPos].exec(items[level][i + count].title) == null)) {
@@ -226,7 +227,7 @@ function filterAndMergeBlocks(state) {
             }
             // are we still too narrow?  if so, bloat, but make sure we don't overlap something later
             if ((end - start) < min_feature_time) {
-              end = start + min_feature_time;                   
+              end = start + min_feature_time;
               if (((i + count) < items[level].length) && (items[level][i + count].start < end))
                 end = items[level][i + count].start;
             }
