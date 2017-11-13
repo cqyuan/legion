@@ -184,7 +184,7 @@ function binarySearch(data, level, time, useStart) {
 }
 
 function filterAndMergeBlocks(state) {
-  console.log("filter and merge");
+  // console.log("filter and merge");
   var windowStart = $("#timeline").scrollLeft();
   var windowEnd = windowStart + $("#timeline").width();
   state.dataToDraw = Array();

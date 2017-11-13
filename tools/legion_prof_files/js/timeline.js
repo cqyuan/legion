@@ -30,6 +30,8 @@ var timeBisector = d3.bisector(function(d) { return d.time; }).left;
 //   .domain([0, num_colors])
 //   .range(["green", "blue", "red", "yellow"]);
 
+var globalLastTime = 0;
+
 String.prototype.hashCode = function() {
   var hash = 0;
   if (this.length == 0) return hash;
@@ -347,6 +349,8 @@ function drawLoaderIcon() {
 }
 
 function showLoaderIcon() {
+  console.log("showing loader");
+  // console.trace();
   state.numLoading++;
   state.loaderSvg.select("g").attr("visibility", "visible");
   state.loaderSvg.attr("width", "40px")
@@ -354,6 +358,7 @@ function showLoaderIcon() {
 }
 
 function hideLoaderIcon() {
+  console.log("hiding loader");
   state.numLoading--;
   if (state.numLoading == 0) {
     state.loaderSvg.select("g").attr("visibility", "hidden");
@@ -922,8 +927,11 @@ function drawTimeline() {
 }
 
 function redraw() {
+  // console.trace();
+  console.log("entering redraw");
+  // console.log(state.numLoading);
   if (state.numLoading == 0) {
-    console.log("entering redraw");
+
     calculateBases();
     filterAndMergeBlocks(state);
     constants.max_level = calculateVisibileLevels();
@@ -996,21 +1004,27 @@ function calculateBases() {
 }
 
 function expandHandler(elem, index) {
+  console.log("expandhandler");
   elem.expanded = !elem.expanded;
 
   if (elem.expanded) {
+    console.log("expanding");
     function expandChild(child) {
       child.visible = true;
       //child.enabled = true;
       if(!child.loaded) {
+        console.log("child not expanded");
         showLoaderIcon();
-        child.loader(child); // will redraw the timeline once loaded
+        child.loader(child, redraw); // will redraw the timeline once loaded
+        // redraw();
       } else if (child.expanded) {
+        console.log("child expanded");
         child.children.forEach(expandChild);
       }
     }
     elem.children.forEach(expandChild);
   } else {
+    console.log("collapsing");
     function collapseChildren(child) {
       child.visible = false;
       child.children.forEach(collapseChildren);
@@ -1029,7 +1043,8 @@ function collapseHandler(d, index) {
     // should always be expanding here
     showLoaderIcon();
     //var elem = state.flattenedLayoutData[index];
-    d.loader(d); // will redraw the timeline once loaded
+    d.loader(d, redraw); // will redraw the timeline once loaded
+    // redraw();
   } else {
     redraw();
   }
@@ -1517,6 +1532,23 @@ function scrollLeftByTime(delta) {
   parseURLParameters();
 }
 
+function scrollToAbsoluteTime(start, end) {
+  var windowStart = $("#timeline").scrollLeft();
+  var windowEnd = windowStart + $("#timeline").width();
+  var start_time = start;
+  var end_time = end;
+  var url = window.location.href.split('?')[0];
+  url += "?start=" + start_time;
+  url += "&end=" + end_time;
+  url += "&collapseAll=" + state.collapseAll;
+  url += "&resolution=" + state.resolution;
+  if (state.searchEnabled)
+    url += "&search=" + searchRegex[currentPos].source;
+  window.history.replaceState("", "", url);
+
+  parseURLParameters();
+}
+
 function adjustZoom(newZoom, scroll) {
   var prevZoom = state.zoom;
   state.zoom = Math.round(newZoom * 10) / 10;
@@ -1800,7 +1832,7 @@ function defaultKeyUp(e) {
   return true;
 }
 
-function load_proc_timeline(proc) {
+function load_proc_timeline(proc, callback) {
   var proc_name = proc.full_text;
   state.processorData[proc_name] = {};
   d3.tsv(proc.tsv,
@@ -1836,6 +1868,9 @@ function load_proc_timeline(proc) {
       // split profiling items by which level they're on
       for(var i = 0; i < data.length; i++) {
         var d = data[i];
+        if (d.end > globalLastTime) {
+          globalLastTime = d.end;
+        }
         if (d.level in state.processorData[proc_name]) {
           state.processorData[proc_name][d.level].push(d);
         } else {
@@ -1851,7 +1886,8 @@ function load_proc_timeline(proc) {
       }
       proc.loaded = true;
       hideLoaderIcon();
-      redraw();
+      // redraw();
+      callback();
     }
   );
 }
@@ -1895,12 +1931,12 @@ function initTimelineElements() {
   }
   turnOnMouseHandlers();
 
-  setInterval(reload_all_files, 5000);
+  setInterval(reload_all_files, 2000);
 
-  setInterval(function() {
-    console.log("scrolloing");
-    scrollLeftByTime(500);
-  }, 500);
+  // setInterval(function() {
+  //   // console.log("scrolloing");
+  //   scrollLeftByTime(500);
+  // }, 500);
 }
 
 function reload_all_files() {
@@ -1909,12 +1945,14 @@ function reload_all_files() {
     console.log(state.flattenedLayoutData[i]);
     if (state.flattenedLayoutData[i].visible == true) {
       showLoaderIcon();
-      state.flattenedLayoutData[i].loader(state.flattenedLayoutData[i])
+      state.flattenedLayoutData[i].loader(state.flattenedLayoutData[i], scrollAndRedraw);
     }
   }
+}
 
-
-
+function scrollAndRedraw() {
+  redraw();
+  scrollToAbsoluteTime(globalLastTime-4000000, globalLastTime);
 }
 
 
@@ -2119,7 +2157,7 @@ function mousemove(d, i) {
 }
 
 // Get the data
-function load_util(elem) {
+function load_util(elem, callback) {
   var util_file = elem.tsv;
 
   // exit early if we already loaded it
@@ -2138,10 +2176,18 @@ function load_util(elem) {
         };
     },
     function(error, data) {
+      for(var i = 0; i < data.length; i++) {
+        var d = data[i];
+        if (d.time > globalLastTime) {
+          globalLastTime = d.time;
+        }
+      }
+
       state.utilData[util_file] = data;
       elem.loaded = true;
       hideLoaderIcon();
-      redraw();
+      // redraw();
+      callback();
     }
   );
 }
