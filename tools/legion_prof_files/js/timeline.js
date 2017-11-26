@@ -1832,9 +1832,13 @@ function defaultKeyUp(e) {
   return true;
 }
 
+var all_loaded_procs = new Set();
+
 function load_proc_timeline(proc, callback) {
   var proc_name = proc.full_text;
-  state.processorData[proc_name] = {};
+  if (!(proc_name in state.processorData))
+    state.processorData[proc_name] = {};
+  
   d3.tsv(proc.tsv,
     function(d, i) {
         var level = +d.level;
@@ -1866,8 +1870,17 @@ function load_proc_timeline(proc, callback) {
     },
     function(data) {
       // split profiling items by which level they're on
+      var num_skipped_elems = 0;
       for(var i = 0; i < data.length; i++) {
         var d = data[i];
+
+        if (all_loaded_procs.has(d.id)) {
+          num_skipped_elems++;
+          continue;
+        }
+          
+        all_loaded_procs.add(d.id);
+
         if (d.end > globalLastTime) {
           globalLastTime = d.end;
         }
@@ -1884,6 +1897,7 @@ function load_proc_timeline(proc, callback) {
           }
         }
       }
+      console.log(num_skipped_elems);
       proc.loaded = true;
       hideLoaderIcon();
       // redraw();
@@ -1931,7 +1945,7 @@ function initTimelineElements() {
   }
   turnOnMouseHandlers();
 
-  setInterval(reload_all_files, 2000);
+  // setInterval(reload_all_files, 2000);
 
   // setInterval(function() {
   //   // console.log("scrolloing");
