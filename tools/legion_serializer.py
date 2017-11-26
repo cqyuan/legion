@@ -151,6 +151,7 @@ class LegionProfASCIIDeserializer(LegionDeserializer):
     def parse(self, filename, verbose):
         skipped = 0
         with open(filename, 'rb') as log:
+            numLinesParsed = 0
             matches = 0
             # Keep track of the first and last times
             first_time = 0L
@@ -158,6 +159,11 @@ class LegionProfASCIIDeserializer(LegionDeserializer):
             for i, line in enumerate(log):
                 if i < self.state.last_line:
                     continue
+
+                numLinesParsed+=1
+                if numLinesParsed >= 100000:
+                    self.state.output_files_and_reset_memory()
+                    numLinesParsed = 0
 
                 print("parsing line {}".format(i))
 

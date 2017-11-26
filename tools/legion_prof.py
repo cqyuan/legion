@@ -340,6 +340,11 @@ class Processor(object):
         call.proc = self
         self.tasks.append(call)
 
+    def clear_time_range(self):
+        # self.tasks = list()
+        self.time_points = list()
+        self.util_time_points = list()
+
     def sort_time_range(self):
         for i, task in enumerate(self.tasks):
             if i < self.last_time_point:
@@ -366,7 +371,7 @@ class Processor(object):
         for point in self.time_points:
             if point.first:
                 if free_levels:
-                    point.thing.set_level(min(free_levels))
+                    point.thing.set_level(min(free_levels)) 
                     free_levels.remove(point.thing.level)
                 else:
                     self.max_levels += 1
@@ -497,6 +502,10 @@ class Memory(object):
                 inst.stop = last_time
         self.last_time = last_time
 
+    def clear_time_range(self):
+        # self.instances = set()
+        self.time_points = list()
+
     def sort_time_range(self):
         self.max_live_instances = 0
         for i, inst in enumerate(self.instances):
@@ -614,6 +623,10 @@ class Channel(object):
 
     def init_time_range(self, last_time):
         self.last_time = last_time
+
+    def clear_time_range(self):
+        # self.copies = set()
+        self.time_points = list()
 
     def sort_time_range(self):
         self.max_live_copies = 0
@@ -1695,6 +1708,7 @@ class StatGatherer(object):
 
 class State(object):
     def __init__(self):
+        self.cur_file_number = 0
         self.processors = {}
         self.memories = {}
         self.channels = {}
@@ -1744,7 +1758,7 @@ class State(object):
             "MessageInfo": self.log_message_info,
             "MapperCallInfo": self.log_mapper_call_info,
             "RuntimeCallInfo": self.log_runtime_call_info,
-            "ProfTaskInfo": self.log_proftask_info
+            "ProfTaskInfo": self.log_proftask_info,
             #"UserInfo": self.log_user_info
         }
 
@@ -2076,6 +2090,14 @@ class State(object):
             channel.init_time_range(self.last_time)
             channel.sort_time_range()
 
+    def clear_time_ranges(self):
+        for proc in self.processors.itervalues():
+            proc.clear_time_range()
+        for mem in self.memories.itervalues():
+            mem.clear_time_range()
+        for channel in self.channels.itervalues():
+            channel.clear_time_range()
+
     def print_processor_stats(self, verbose):
         print('****************************************************')
         print('   PROCESSOR STATS')
@@ -2355,6 +2377,7 @@ class State(object):
             json.dump(stats_structure, json_file)
 
         # here we write out the actual tsv stats files
+        file_ext = "_util_{}.tsv".format(self.cur_file_number)
         for tp_group in timepoints_dict:
             timepoints = timepoints_dict[tp_group]
             utilizations = [self.convert_to_utilization(tp, tp[0].thing.get_owner())
@@ -2373,10 +2396,10 @@ class State(object):
             else:
                 utilization = self.calculate_utilization_data(sorted(itertools.chain(*utilizations)), owners)
 
-            util_tsv_filename = os.path.join(output_dirname, "tsv", str(tp_group) + "_util.tsv")
+            util_tsv_filename = os.path.join(output_dirname, "tsv", str(tp_group) + file_ext)
             with open(util_tsv_filename, "w") as util_tsv_file:
                 util_tsv_file.write("time\tcount\n")
-                util_tsv_file.write("0.00\t0.00\n") # initial point
+                # util_tsv_file.write("0.00\t0.00\n") # initial point
                 for util_point in utilization:
                     util_tsv_file.write("%.2f\t%.2f\n" % util_point)
 
@@ -2685,11 +2708,27 @@ class State(object):
             simplified_critical_path.add(p.get_unique_tuple())
         return list(simplified_critical_path)
 
+    def output_files_and_reset_memory(self):
+        # Once we are done loading everything, do the sorting
+        self.sort_time_ranges()
+
+        if self.should_print_stats:
+            self.print_stats(verbose)
+        else:
+            # state.emit_interactive_visualization(output_dirname, show_procs,
+            #                      file_names, show_channels, show_instances, force)
+            self.emit_interactive_visualization(self.output_dirname, self.should_show_procs,
+                                    self.file_names, self.should_show_channels, self.should_show_instances, False)
+            if self.should_show_copy_matrix:
+                self.show_copy_matrix(self.copy_output_prefix)
+
+        self.clear_time_ranges()
+        raw_input()
 
     def emit_interactive_visualization(self, output_dirname, show_procs,
                                file_names, show_channels, show_instances, force):
         self.assign_colors()
-
+        self.cur_file_number += 1
 
         proc_list = []
         chan_list = []
@@ -2733,12 +2772,15 @@ class State(object):
         for op_id, operation in self.operations.iteritems():
             proc = ""
             level = ""
-            if (operation.proc is not None):
+            if (operation.proc is not None and operation.level is not None):
                 proc = repr(operation.proc)
                 level = str(operation.level+1)
             ops_file.write("%d\t%s\t%s\t%s\n" % \
                             (op_id, str(operation), proc, level))
         ops_file.close()
+
+        file_ext = "_{}.tsv".format(self.cur_file_number)
+        
 
         if show_procs:
             for proc in self.processors.itervalues():
@@ -2753,7 +2795,7 @@ class State(object):
                         proc.attach_dependencies(self, op_dependencies,
                                                  transitive_map)
                     proc_name = slugify("Proc_" + str(hex(p)))
-                    proc_tsv_file_name = os.path.join(tsv_dir, proc_name + ".tsv")
+                    proc_tsv_file_name = os.path.join(tsv_dir, proc_name + file_ext)
                     with open(proc_tsv_file_name, "w") as proc_tsv_file:
                         proc_tsv_file.write(data_tsv_header)
                         proc_level = proc.emit_tsv(proc_tsv_file, 0)
@@ -2769,7 +2811,7 @@ class State(object):
             for c,chan in sorted(self.channels.iteritems(), key=lambda x: x[1]):
                 if len(chan.copies) > 0:
                     chan_name = slugify(str(c))
-                    chan_tsv_file_name = os.path.join(tsv_dir, chan_name + ".tsv")
+                    chan_tsv_file_name = os.path.join(tsv_dir, chan_name + file_ext)
                     with open(chan_tsv_file_name, "w") as chan_tsv_file:
                         chan_tsv_file.write(data_tsv_header)
                         chan_level = chan.emit_tsv(chan_tsv_file, 0)
@@ -2785,7 +2827,7 @@ class State(object):
             for m,mem in sorted(self.memories.iteritems(), key=lambda x: x[1]):
                 if len(mem.instances) > 0:
                     mem_name = slugify("Mem_" + str(hex(m)))
-                    mem_tsv_file_name = os.path.join(tsv_dir, mem_name + ".tsv")
+                    mem_tsv_file_name = os.path.join(tsv_dir, mem_name + file_ext)
                     with open(mem_tsv_file_name, "w") as mem_tsv_file:
                         mem_tsv_file.write(data_tsv_header)
                         mem_level = mem.emit_tsv(mem_tsv_file, 0)
@@ -2860,6 +2902,8 @@ class State(object):
 
         shutil.copytree(src_directory, output_dirname)
 
+
+
 def main():
     class MyParser(argparse.ArgumentParser):
         def error(self, message):
@@ -2894,6 +2938,8 @@ def main():
         help='input Legion Prof log filenames')
     args = parser.parse_args()
 
+    state = State()
+
     file_names = args.filenames
     show_all = not args.show_copy_matrix
     show_procs = show_all
@@ -2906,7 +2952,19 @@ def main():
     print_stats = args.print_stats
     verbose = args.verbose
 
-    state = State()
+    state.file_names = args.filenames
+    state.show_all = not args.show_copy_matrix
+    state.should_show_procs = show_all
+    state.should_show_channels = show_all
+    state.should_show_instances = show_all
+    state.should_show_copy_matrix = args.show_copy_matrix
+    state.force = args.force
+    state.output_dirname = args.output
+    state.copy_output_prefix = output_dirname + "_copy"
+    state.should_print_stats = args.print_stats
+    state.verbose = args.verbose
+
+    
     has_matches = False
     has_binary_files = False # true if any of the files are a binary file
 
@@ -2950,18 +3008,7 @@ def main():
             print('No matches found! Exiting...')
             return
 
-        # Once we are done loading everything, do the sorting
-        state.sort_time_ranges()
-
-        if print_stats:
-            state.print_stats(verbose)
-        else:
-            # state.emit_interactive_visualization(output_dirname, show_procs,
-            #                      file_names, show_channels, show_instances, force)
-            state.emit_interactive_visualization(output_dirname, show_procs,
-                                 file_names, show_channels, show_instances, True)
-            if show_copy_matrix:
-                state.show_copy_matrix(copy_output_prefix)
+        
 
         pytime.sleep(2)
         # raw_input()
