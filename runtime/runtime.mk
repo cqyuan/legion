@@ -535,9 +535,7 @@ HIGH_RUNTIME_SRC += $(LG_RT_DIR)/legion/legion.cc \
 		    $(LG_RT_DIR)/legion/region_tree.cc \
 		    $(LG_RT_DIR)/legion/runtime.cc \
 		    $(LG_RT_DIR)/legion/garbage_collection.cc \
-		    $(LG_RT_DIR)/legion/mapper_manager.cc \
-		    $(LG_RT_DIR)/legion/image_reduction.cc \
-		    $(LG_RT_DIR)/legion/image_reduction_composite.cc
+		    $(LG_RT_DIR)/legion/mapper_manager.cc
 
 # General shell commands
 SHELL	:= /bin/sh
