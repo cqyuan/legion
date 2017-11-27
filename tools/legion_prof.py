@@ -2802,7 +2802,7 @@ class State(object):
                     base_level += proc_level
                     processor_levels[proc] = {
                         'levels': proc_level-1,
-                        'tsv': "tsv/" + proc_name + ".tsv"
+                        'tsv': "tsv/" + proc_name 
                     }
                     proc_list.append(proc)
 
@@ -2818,7 +2818,7 @@ class State(object):
                     base_level += chan_level
                     channel_levels[chan] = {
                         'levels': chan_level-1,
-                        'tsv': "tsv/" + chan_name + ".tsv"
+                        'tsv': "tsv/" + chan_name 
                     }
                     chan_list.append(chan)
 
@@ -2834,7 +2834,7 @@ class State(object):
                     base_level += mem_level
                     memory_levels[mem] = {
                         'levels': mem_level-1,
-                        'tsv': "tsv/" + mem_name + ".tsv"
+                        'tsv': "tsv/" + mem_name 
                     }
                     mem_list.append(mem)
 

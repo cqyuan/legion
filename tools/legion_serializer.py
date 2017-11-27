@@ -189,6 +189,7 @@ class LegionProfASCIIDeserializer(LegionDeserializer):
                         print('Skipping line: %s' % line.strip())
 
                 self.state.last_line += 1
+            self.state.output_files_and_reset_memory()
         if skipped > 0:
             print('WARNING: Skipped %d lines in %s' % (skipped, filename))
         return matches
