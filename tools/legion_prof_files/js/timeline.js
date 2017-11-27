@@ -502,7 +502,8 @@ function getElement(depth, text, full_text, type, num_levels, loader,
     full_text: full_text,
     type: type,
     tsv: tsv,
-    visible: visible
+    visible: visible,
+    cur_file_number: 1
   };
 
   // Create child elements. Child elements will be enabled, but they will be
@@ -512,7 +513,7 @@ function getElement(depth, text, full_text, type, num_levels, loader,
       var util_name = "node " + child;
       var child_element = getElement(depth + 1, util_name, undefined,
                                      "util", num_levels, loader,
-                                     "tsv/" + child + "_util.tsv",
+                                     "tsv/" + child + "_util",
                                      element, util_files[child], true, false);
       element.children.push(child_element);
     });
@@ -549,7 +550,7 @@ function calculateLayout() {
       var util_name = "all nodes " + kind;
       var kind_element = getElement(0, util_name, undefined, "util",
                                      constants.util_levels, load_util,
-                                     "tsv/" + name + "_util.tsv",
+                                     "tsv/" + name + "_util",
                                      undefined, util_files[kind], false, true);
       state.layoutData.push(kind_element);
     });
@@ -570,7 +571,7 @@ function calculateLayout() {
           var util_name = "node " + kind;
           var kind_element = getElement(0, util_name, undefined, "util",
                                          constants.util_levels, load_util,
-                                         "tsv/" + kind + "_util.tsv",
+                                         "tsv/" + kind + "_util",
                                          undefined, util_files[kind],
                                          false, true);
           state.layoutData.push(kind_element);
@@ -1832,7 +1833,7 @@ function defaultKeyUp(e) {
   return true;
 }
 
-var all_loaded_procs = new Set();
+// var all_loaded_procs = new Set();
 
 function load_proc_timeline(proc, callback) {
   var proc_name = proc.full_text;
@@ -1868,18 +1869,21 @@ function load_proc_timeline(proc, callback) {
             };
         }
     },
-    function(data) {
+    function(error, data) {
+      if (error) {
+        throw error;
+      }
       // split profiling items by which level they're on
-      var num_skipped_elems = 0;
+      // var num_skipped_elems = 0;
       for(var i = 0; i < data.length; i++) {
         var d = data[i];
 
-        if (all_loaded_procs.has(d.id)) {
-          num_skipped_elems++;
-          continue;
-        }
+        // if (all_loaded_procs.has(d.id)) {
+        //   num_skipped_elems++;
+        //   continue;
+        // }
           
-        all_loaded_procs.add(d.id);
+        // all_loaded_procs.add(d.id);
 
         if (d.end > globalLastTime) {
           globalLastTime = d.end;
@@ -1897,7 +1901,7 @@ function load_proc_timeline(proc, callback) {
           }
         }
       }
-      console.log(num_skipped_elems);
+      // console.log(num_skipped_elems);
       proc.loaded = true;
       hideLoaderIcon();
       // redraw();
@@ -2181,29 +2185,44 @@ function load_util(elem, callback) {
   //   redraw();
   //   return;
   // }
-
-  d3.tsv(util_file,
-    function(d) {
-        return {
-          time:  +d.time,
-          count: +d.count
-        };
-    },
-    function(error, data) {
-      for(var i = 0; i < data.length; i++) {
-        var d = data[i];
-        if (d.time > globalLastTime) {
-          globalLastTime = d.time;
+  // while (true) {
+    try {
+      var file_name = util_file + "_" + elem.cur_file_number + ".tsv";
+      d3.tsv(file_name,
+        function(d) {
+            return {
+              time:  +d.time,
+              count: +d.count
+            };
+        },
+        function(error, data) {
+          if (error) {
+            return;
+          }
+          for(var i = 0; i < data.length; i++) {
+            var d = data[i];
+            if (d.time > globalLastTime) {
+              globalLastTime = d.time;
+            }
+          }
+    
+          state.utilData[util_file] = data;
+          elem.loaded = true;
+          hideLoaderIcon();
+          // redraw();
+          
+          callback();
+          elem.cur_file_number++;
+          load_util(elem, callback);
         }
-      }
+      );
+    } catch(err) {
+      // console.log(err);
+      // break;
+    } 
+  // }
 
-      state.utilData[util_file] = data;
-      elem.loaded = true;
-      hideLoaderIcon();
-      // redraw();
-      callback();
-    }
-  );
+  
 }
 
 function load_critical_path() {
