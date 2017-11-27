@@ -2723,7 +2723,7 @@ class State(object):
                 self.show_copy_matrix(self.copy_output_prefix)
 
         self.clear_time_ranges()
-        raw_input()
+        # raw_input()
 
     def emit_interactive_visualization(self, output_dirname, show_procs,
                                file_names, show_channels, show_instances, force):

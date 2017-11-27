@@ -1015,7 +1015,7 @@ function expandHandler(elem, index) {
       //child.enabled = true;
       if(!child.loaded) {
         console.log("child not expanded");
-        showLoaderIcon();
+        // showLoaderIcon();
         child.loader(child, redraw); // will redraw the timeline once loaded
         // redraw();
       } else if (child.expanded) {
@@ -1042,7 +1042,7 @@ function collapseHandler(d, index) {
 
   if (!d.loaded) {
     // should always be expanding here
-    showLoaderIcon();
+    // showLoaderIcon();
     //var elem = state.flattenedLayoutData[index];
     d.loader(d, redraw); // will redraw the timeline once loaded
     // redraw();
@@ -1840,7 +1840,9 @@ function load_proc_timeline(proc, callback) {
   if (!(proc_name in state.processorData))
     state.processorData[proc_name] = {};
   
-  d3.tsv(proc.tsv,
+  var file_name = proc.tsv + "_" + proc.cur_file_number + ".tsv";
+
+  d3.tsv(file_name,
     function(d, i) {
         var level = +d.level;
         var start = +d.start;
@@ -1871,7 +1873,7 @@ function load_proc_timeline(proc, callback) {
     },
     function(error, data) {
       if (error) {
-        throw error;
+        return;
       }
       // split profiling items by which level they're on
       // var num_skipped_elems = 0;
@@ -1903,9 +1905,11 @@ function load_proc_timeline(proc, callback) {
       }
       // console.log(num_skipped_elems);
       proc.loaded = true;
-      hideLoaderIcon();
+      // hideLoaderIcon();
       // redraw();
       callback();
+      proc.cur_file_number++;
+      load_proc_timeline(proc, callback);
     }
   );
 }
@@ -2177,6 +2181,9 @@ function mousemove(d, i) {
 // Get the data
 function load_util(elem, callback) {
   var util_file = elem.tsv;
+  if (!(util_file in state.utilData)) {
+    state.utilData[util_file] = [];
+  }
 
   // exit early if we already loaded it
   // if(state.utilData[util_file]) {
@@ -2199,16 +2206,19 @@ function load_util(elem, callback) {
           if (error) {
             return;
           }
+          // console.log(data);
           for(var i = 0; i < data.length; i++) {
             var d = data[i];
             if (d.time > globalLastTime) {
               globalLastTime = d.time;
             }
+            state.utilData[util_file].push(d);
           }
+          // console.log(state.utilData[util_file]);
     
-          state.utilData[util_file] = data;
+          // state.utilData[util_file] = data;
           elem.loaded = true;
-          hideLoaderIcon();
+          // hideLoaderIcon();
           // redraw();
           
           callback();
