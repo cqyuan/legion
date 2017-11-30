@@ -317,6 +317,7 @@ class Processor(object):
         self.time_points = list()
         self.last_time_point = 0
         self.util_time_points = list()
+        self.free_levels = set()
 
     def get_short_text(self):
         return self.kind + " Proc " + str(self.proc_in_node)
@@ -366,18 +367,18 @@ class Processor(object):
 
         self.util_time_points.sort(key=lambda p: p.time_key)
         self.time_points.sort(key=lambda p: p.time_key)
-        free_levels = set()
+        # free_levels = set()
         # self.max_levels = 0
         for point in self.time_points:
             if point.first:
-                if free_levels:
-                    point.thing.set_level(min(free_levels)) 
-                    free_levels.remove(point.thing.level)
+                if self.free_levels:
+                    point.thing.set_level(min(self.free_levels)) 
+                    self.free_levels.remove(point.thing.level)
                 else:
                     self.max_levels += 1
                     point.thing.set_level(self.max_levels)
             else:
-                free_levels.add(point.thing.level)
+                self.free_levels.add(point.thing.level)
 
     def add_initiation_dependencies(self, state, op_dependencies, transitive_map):
         for point in self.time_points:
@@ -487,6 +488,7 @@ class Memory(object):
         self.last_time_point = 0
         self.max_live_instances = 0
         self.last_time = None
+        self.free_levels = set()
 
     def get_short_text(self):
         return self.kind + " Memory " + str(self.mem_in_node)
@@ -523,19 +525,19 @@ class Memory(object):
             self.time_points.append(TimePoint(inst.stop, inst, False))
         # Keep track of which levels are free
         self.time_points.sort(key=lambda p: p.time_key)
-        free_levels = set()
+        # free_levels = set()
         # Iterate over all the points in sorted order
         for point in self.time_points:
             if point.first:
                 # Find a level to assign this to
-                if len(free_levels) > 0:
-                    point.thing.set_level(free_levels.pop())
+                if len(self.free_levels) > 0:
+                    point.thing.set_level(self.free_levels.pop())
                 else:
                     point.thing.set_level(self.max_live_instances + 1)
                     self.max_live_instances += 1
             else:
                 # Finishing this instance so restore its point
-                free_levels.add(point.thing.level)
+                self.free_levels.add(point.thing.level)
 
     def emit_tsv(self, tsv_file, base_level):
         max_levels = self.max_live_instances + 1
@@ -608,6 +610,7 @@ class Channel(object):
         self.last_time_point = 0
         self.max_live_copies = 0
         self.last_time = None
+        self.free_levels = set()
 
     def get_short_text(self):
         if self.dst is not None:
@@ -639,18 +642,18 @@ class Channel(object):
             self.time_points.append(TimePoint(copy.stop, copy, False))
         # Keep track of which levels are free
         self.time_points.sort(key=lambda p: p.time_key)
-        free_levels = set()
+        # free_levels = set()
         # Iterate over all the points in sorted order
         for point in self.time_points:
             if point.first:
-                if len(free_levels) > 0:
-                    point.thing.level = free_levels.pop()
+                if len(self.free_levels) > 0:
+                    point.thing.level = self.free_levels.pop()
                 else:
                     point.thing.level = self.max_live_copies + 1
                     self.max_live_copies += 1
             else:
                 # Finishing this instance so restore its point
-                free_levels.add(point.thing.level)
+                self.free_levels.add(point.thing.level)
 
     def emit_tsv(self, tsv_file, base_level):
         max_levels = self.max_live_copies + 1
