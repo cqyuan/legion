@@ -161,11 +161,12 @@ class LegionProfASCIIDeserializer(LegionDeserializer):
                     continue
 
                 numLinesParsed+=1
-                if numLinesParsed >= 100000:
+                if numLinesParsed >= 200000:
                     self.state.output_files_and_reset_memory()
                     numLinesParsed = 0
 
-                print("parsing line {}".format(i))
+                if (i % 100000 == 0):
+                    print("parsing line {}".format(i))
 
                 if not self.state.has_spy_data and \
                     (legion_spy.config_pat.match(line) or \
