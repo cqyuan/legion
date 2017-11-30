@@ -367,7 +367,7 @@ class Processor(object):
         self.util_time_points.sort(key=lambda p: p.time_key)
         self.time_points.sort(key=lambda p: p.time_key)
         free_levels = set()
-        self.max_levels = 0
+        # self.max_levels = 0
         for point in self.time_points:
             if point.first:
                 if free_levels:
@@ -485,7 +485,7 @@ class Memory(object):
         self.instances = set()
         self.time_points = list()
         self.last_time_point = 0
-        self.max_live_instances = None
+        self.max_live_instances = 0
         self.last_time = None
 
     def get_short_text(self):
@@ -507,7 +507,7 @@ class Memory(object):
         self.time_points = list()
 
     def sort_time_range(self):
-        self.max_live_instances = 0
+        # self.max_live_instances = 0
         for i, inst in enumerate(self.instances):
             # If we've already parsed this entry, skip it
             if i < self.last_time_point:
@@ -606,7 +606,7 @@ class Channel(object):
         self.copies = set()
         self.time_points = list()
         self.last_time_point = 0
-        self.max_live_copies = None
+        self.max_live_copies = 0
         self.last_time = None
 
     def get_short_text(self):
@@ -629,7 +629,7 @@ class Channel(object):
         self.time_points = list()
 
     def sort_time_range(self):
-        self.max_live_copies = 0
+        # self.max_live_copies = 0
         for i, copy in enumerate(self.copies):
             if i < self.last_time_point:
                 continue
