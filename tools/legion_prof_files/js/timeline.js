@@ -32,6 +32,12 @@ var timeBisector = d3.bisector(function(d) { return d.time; }).left;
 
 var globalLastTime = 0;
 
+var intervals = {
+  refreshfiles: null,
+  autoscroll: null,
+  refresh_rate: 2000 // in milliseconds
+};
+
 String.prototype.hashCode = function() {
   var hash = 0;
   if (this.length == 0) return hash;
@@ -42,6 +48,31 @@ String.prototype.hashCode = function() {
     hash = hash & hash;
   }
   return Math.abs(hash);
+}
+
+function parseURLStartEnd() {
+  var match,
+  pl     = /\+/g,  // Regex for replacing addition symbol with a space
+  search = /([^&=]+)=?([^&]*)/g,
+  decode = function (s) { return decodeURIComponent(s.replace(pl, " ")); },
+  query  = window.location.search.substring(1);
+
+  var urlParams = {};
+  while (match = search.exec(query))
+    urlParams[decode(match[1])] = decode(match[2]);
+
+  var zstart = constants.start;
+  if ("start" in urlParams)
+    zstart = Math.max(constants.start, parseFloat(urlParams["start"]));
+
+  var zend = constants.end;
+  if ("end" in urlParams)
+    zend = Math.min(constants.end, parseFloat(urlParams["end"]));
+
+  return {
+    start: zstart,
+    end: zend
+  }
 }
 
 function parseURLParameters() {
@@ -1533,10 +1564,11 @@ function scrollLeftByTime(delta) {
   parseURLParameters();
 }
 
-function scrollToAbsoluteTime(start, end) {
+function scrollToEnd(end) {
+  oldTimes = parseURLStartEnd();
   var windowStart = $("#timeline").scrollLeft();
   var windowEnd = windowStart + $("#timeline").width();
-  var start_time = start;
+  var start_time = end-oldTimes.end + oldTimes.start;
   var end_time = end;
   var url = window.location.href.split('?')[0];
   url += "?start=" + start_time;
@@ -1952,6 +1984,7 @@ function initTimelineElements() {
     }
   }
   turnOnMouseHandlers();
+  createCheckboxes();
 
   // setInterval(reload_all_files, 2000);
 
@@ -1961,12 +1994,35 @@ function initTimelineElements() {
   // }, 500);
 }
 
+function createCheckboxes() {
+  $('body').prepend('<label><input type="checkbox" id="autoscroll" text="Automatically Scroll"/>Automatically Scroll</label>');
+  $('body').prepend('<label><input type="checkbox" id="refreshfiles" text="Periodically Refresh"/>Periodically Refresh</label>');
+  $('#autoscroll').change(
+    function() {
+      if (this.checked) {
+        intervals.autoscroll = true;
+      } else {
+        intervals.autoscroll = false;
+      }
+    }
+  );
+  $('#refreshfiles').change(
+    function() {
+      if (this.checked) {
+        intervals.reload_all_files = setInterval(reload_all_files, intervals.refresh_rate);
+      } else {
+        clearInterval(intervals.reload_all_files);
+      }
+    }
+  );
+}
+
 function reload_all_files() {
   for (var i = 0; i < state.flattenedLayoutData.length; i++) {
 
     console.log(state.flattenedLayoutData[i]);
     if (state.flattenedLayoutData[i].visible == true) {
-      showLoaderIcon();
+      // showLoaderIcon();
       state.flattenedLayoutData[i].loader(state.flattenedLayoutData[i], scrollAndRedraw);
     }
   }
@@ -1974,7 +2030,11 @@ function reload_all_files() {
 
 function scrollAndRedraw() {
   redraw();
-  scrollToAbsoluteTime(globalLastTime-4000000, globalLastTime);
+  if (intervals.autoscroll) {
+    scrollToEnd(globalLastTime);
+    console.log("scrolling");
+  }
+  
 }
 
 
