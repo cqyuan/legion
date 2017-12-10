@@ -1872,7 +1872,8 @@ function load_proc_timeline(proc, callback) {
   if (!(proc_name in state.processorData))
     state.processorData[proc_name] = {};
   
-  var file_name = proc.tsv + "_" + proc.cur_file_number + ".tsv";
+  // var file_name = proc.tsv + "_" + proc.cur_file_number + ".tsv";
+  var file_name = proc.tsv + "_1.tsv";
 
   d3.tsv(file_name,
     function(d, i) {
@@ -1912,12 +1913,12 @@ function load_proc_timeline(proc, callback) {
       for(var i = 0; i < data.length; i++) {
         var d = data[i];
 
-        // if (all_loaded_procs.has(d.id)) {
-        //   num_skipped_elems++;
-        //   continue;
-        // }
+        if (all_loaded_procs.has(d.id)) {
+          num_skipped_elems++;
+          continue;
+        }
           
-        // all_loaded_procs.add(d.id);
+        all_loaded_procs.add(d.id);
 
         if (d.end > globalLastTime) {
           globalLastTime = d.end;
@@ -2241,9 +2242,9 @@ function mousemove(d, i) {
 // Get the data
 function load_util(elem, callback) {
   var util_file = elem.tsv;
-  if (!(util_file in state.utilData)) {
+  // if (!(util_file in state.utilData)) {
     state.utilData[util_file] = [];
-  }
+  // }
 
   // exit early if we already loaded it
   // if(state.utilData[util_file]) {
@@ -2254,7 +2255,8 @@ function load_util(elem, callback) {
   // }
   // while (true) {
     try {
-      var file_name = util_file + "_" + elem.cur_file_number + ".tsv";
+      // var file_name = util_file + "_" + elem.cur_file_number + ".tsv";
+      var file_name = util_file + "_1.tsv";
       d3.tsv(file_name,
         function(d) {
             return {
