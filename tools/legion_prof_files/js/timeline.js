@@ -1865,7 +1865,7 @@ function defaultKeyUp(e) {
   return true;
 }
 
-// var all_loaded_procs = new Set();
+var all_loaded_procs = new Set();
 
 function load_proc_timeline(proc, callback) {
   var proc_name = proc.full_text;
