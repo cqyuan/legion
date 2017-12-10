@@ -18497,7 +18497,7 @@ namespace Legion {
           }
           if (!strcmp(argv[i],"-lg:prof_footprint"))
           {
-            prof_footprint_threshold = atoi(argv[++i]) << 20;
+            prof_footprint_threshold = atoi(argv[++i]) << 10;
             continue;
           }
           INT_ARG("-lg:prof_latency",prof_target_latency);
