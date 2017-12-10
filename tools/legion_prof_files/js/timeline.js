@@ -1942,7 +1942,7 @@ function load_proc_timeline(proc, callback) {
       // redraw();
       callback();
       proc.cur_file_number++;
-      load_proc_timeline(proc, callback);
+      // load_proc_timeline(proc, callback);
     }
   );
 }
@@ -2285,7 +2285,7 @@ function load_util(elem, callback) {
           
           callback();
           elem.cur_file_number++;
-          load_util(elem, callback);
+          // load_util(elem, callback);
         }
       );
     } catch(err) {
