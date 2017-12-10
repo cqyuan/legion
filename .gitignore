@@ -16,3 +16,4 @@ core
 *.bbl
 *.blg
 *.aux
+.vscode/tags

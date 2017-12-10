@@ -2727,27 +2727,27 @@ class State(object):
             if self.should_show_copy_matrix:
                 self.show_copy_matrix(self.copy_output_prefix)
 
-        self.clear_time_ranges()
+        # self.clear_time_ranges()
         # raw_input()
 
     def emit_interactive_visualization(self, output_dirname, show_procs,
                                file_names, show_channels, show_instances, force):
         self.assign_colors()
 	
-        should_increment = False
-        for p, proc in self.processors.iteritems():
-            if len(proc.tasks) > 0:
-                should_increment = True
-        for c, chan in self.channels.iteritems():
-            if len(chan.copies) > 0:
-                should_increment = True
-        for m, mem in self.memories.iteritems():
-            if len(mem.instances) > 0:
-                should_increment = True
+        # should_increment = False
+        # for p, proc in self.processors.iteritems():
+        #     if len(proc.tasks) > 0:
+        #         should_increment = True
+        # for c, chan in self.channels.iteritems():
+        #     if len(chan.copies) > 0:
+        #         should_increment = True
+        # for m, mem in self.memories.iteritems():
+        #     if len(mem.instances) > 0:
+        #         should_increment = True
 
-        if should_increment:
-            self.cur_file_number += 1
-            print("incrementing cur_file_no to: {}".format(self.cur_file_number))
+        # if should_increment:
+        #     self.cur_file_number += 1
+        #     print("incrementing cur_file_no to: {}".format(self.cur_file_number))
 
         proc_list = []
         chan_list = []
