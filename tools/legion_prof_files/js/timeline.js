@@ -2242,9 +2242,9 @@ function mousemove(d, i) {
 // Get the data
 function load_util(elem, callback) {
   var util_file = elem.tsv;
-  // if (!(util_file in state.utilData)) {
+  if (!(util_file in state.utilData)) {
     state.utilData[util_file] = [];
-  // }
+  }
 
   // exit early if we already loaded it
   // if(state.utilData[util_file]) {
