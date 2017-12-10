@@ -26,23 +26,23 @@
 #endif
 
 #include "legion.h"
-#include "runtime.h"
-#include "legion_ops.h"
-#include "legion_tasks.h"
-#include "legion_trace.h"
-#include "legion_utilities.h"
-#include "region_tree.h"
-#include "legion_spy.h"
-#include "legion_profiling.h"
-#include "legion_instances.h"
-#include "legion_views.h"
-#include "legion_context.h"
-#include "mapper_manager.h"
-#include "garbage_collection.h"
-#include "default_mapper.h"
-#include "test_mapper.h"
-#include "replay_mapper.h"
-#include "debug_mapper.h"
+#include "legion/runtime.h"
+#include "legion/legion_ops.h"
+#include "legion/legion_tasks.h"
+#include "legion/legion_trace.h"
+#include "legion/legion_utilities.h"
+#include "legion/region_tree.h"
+#include "legion/legion_spy.h"
+#include "legion/legion_profiling.h"
+#include "legion/legion_instances.h"
+#include "legion/legion_views.h"
+#include "legion/legion_context.h"
+#include "legion/mapper_manager.h"
+#include "legion/garbage_collection.h"
+#include "mappers/default_mapper.h"
+#include "mappers/test_mapper.h"
+#include "mappers/replay_mapper.h"
+#include "mappers/debug_mapper.h"
 
 #include <unistd.h> // sleep for warnings
 
@@ -287,8 +287,6 @@ namespace Legion {
     FutureImpl::~FutureImpl(void)
     //--------------------------------------------------------------------------
     {
-      if (is_owner() && registered_with_runtime)
-        unregister_with_runtime(REFERENCE_VIRTUAL_CHANNEL);
       // don't want to leak events
       if (!ready_event.has_triggered())
         Runtime::trigger_event(ready_event);
@@ -776,8 +774,6 @@ namespace Legion {
     FutureMapImpl::~FutureMapImpl(void)
     //--------------------------------------------------------------------------
     {
-      if (is_owner() && registered_with_runtime)
-        unregister_with_runtime(REFERENCE_VIRTUAL_CHANNEL);
       futures.clear();
     }
 
@@ -1281,6 +1277,18 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       return mapped;
+    }
+
+    //--------------------------------------------------------------------------
+    bool PhysicalRegionImpl::is_external_region(void) const
+    //--------------------------------------------------------------------------
+    {
+      if (references.empty())
+        return false;
+      for (unsigned idx = 0; idx < references.size(); idx++)
+        if (!references[idx].get_manager()->is_external_instance())
+          return false;
+      return true;
     }
 
     //--------------------------------------------------------------------------
@@ -2469,7 +2477,7 @@ namespace Legion {
       : runtime(rt), local_proc(proc), proc_kind(kind), 
         stealing_disabled(no_steal), replay_execution(replay), 
         next_local_index(0), task_scheduler_enabled(false), 
-        total_active_contexts(0)
+        total_active_contexts(0), total_active_mappers(0)
     //--------------------------------------------------------------------------
     {
       this->local_queue_lock = Reservation::create_reservation();
@@ -2500,7 +2508,7 @@ namespace Legion {
     ProcessorManager::~ProcessorManager(void)
     //--------------------------------------------------------------------------
     {
-      ready_queues.clear();
+      mapper_states.clear();
       local_queue_lock.destroy_reservation();
       local_queue_lock = Reservation::NO_RESERVATION;
       queue_lock.destroy_reservation();
@@ -2578,7 +2586,7 @@ namespace Legion {
       {
         mappers[mid] = std::pair<MapperManager*,bool>(m, own); 
         AutoLock q_lock(queue_lock);
-        ready_queues[mid] = std::list<TaskOp*>();
+        mapper_states[mid] = MapperState();
       }
     }
 
@@ -2648,7 +2656,7 @@ namespace Legion {
       // Now re-take the lock and re-check the condition to see 
       // if the next scheduling task should be launched
       AutoLock q_lock(queue_lock);
-      if (total_active_contexts > 0)
+      if ((total_active_contexts > 0) && (total_active_mappers > 0))
       {
         task_scheduler_enabled = true;
         launch_task_scheduler();
@@ -2665,6 +2673,34 @@ namespace Legion {
       sched_args.proc = local_proc;
       runtime->issue_runtime_meta_task(sched_args, LG_LATENCY_PRIORITY);
     } 
+
+    //--------------------------------------------------------------------------
+    void ProcessorManager::notify_deferred_mapper(MapperID map_id,
+                                                  RtEvent deferred_event)
+    //--------------------------------------------------------------------------
+    {
+      AutoLock q_lock(queue_lock);
+      MapperState &state = mapper_states[map_id];
+      // Check to see if the deferral event matches the one that we have
+      if (state.deferral_event == deferred_event)
+      {
+        // Now we can clear it
+        state.deferral_event = RtEvent::NO_RT_EVENT;
+        // And if we still have tasks, reactivate the mapper
+        if (!state.ready_queue.empty())
+          increment_active_mappers();
+      }
+    }
+
+    //--------------------------------------------------------------------------
+    /*static*/ void ProcessorManager::handle_defer_mapper(const void *args)
+    //--------------------------------------------------------------------------
+    {
+      const DeferMapperSchedulerArgs *dargs = 
+        (const DeferMapperSchedulerArgs*)args; 
+      dargs->proxy_this->notify_deferred_mapper(dargs->map_id, 
+                                                dargs->deferral_event);
+    }
 
     //--------------------------------------------------------------------------
     void ProcessorManager::activate_context(InnerContext *context)
@@ -2711,7 +2747,8 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       // Better be called while holding the queue lock
-      if ((total_active_contexts == 0) && !task_scheduler_enabled)
+      if (!task_scheduler_enabled && (total_active_contexts == 0) &&
+          (total_active_mappers > 0))
       {
         task_scheduler_enabled = true;
         launch_task_scheduler();
@@ -2729,6 +2766,33 @@ namespace Legion {
 #endif
       total_active_contexts--;
       if (total_active_contexts == 0)
+        task_scheduler_enabled = false;
+    }
+
+    //--------------------------------------------------------------------------
+    void ProcessorManager::increment_active_mappers(void)
+    //--------------------------------------------------------------------------
+    {
+      // Better be called while holding the queue lock
+      if (!task_scheduler_enabled && (total_active_mappers == 0) &&
+          (total_active_contexts > 0))
+      {
+        task_scheduler_enabled = true;
+        launch_task_scheduler();
+      }
+      total_active_mappers++;
+    }
+
+    //--------------------------------------------------------------------------
+    void ProcessorManager::decrement_active_mappers(void)
+    //--------------------------------------------------------------------------
+    {
+      // Better be called while holding the queue lock
+#ifdef DEBUG_LEGION
+      assert(total_active_mappers > 0);
+#endif
+      total_active_mappers--;
+      if (total_active_mappers == 0)
         task_scheduler_enabled = false;
     }
 
@@ -2761,11 +2825,11 @@ namespace Legion {
         std::vector<const Task*> &mapper_tasks = input.stealable_tasks;
         {
           AutoLock q_lock(queue_lock,1,false/*exclusive*/);
-          std::list<TaskOp*> &target_list = ready_queues[stealer];
+          std::list<TaskOp*> &target_list = mapper_states[stealer].ready_queue;
           for (std::list<TaskOp*>::const_iterator it = 
                 target_list.begin(); it != target_list.end(); it++)
           {
-            if ((*it)->is_stealable() && !(*it)->is_locally_mapped())
+            if ((*it)->is_stealable() && !(*it)->is_origin_mapped())
               mapper_tasks.push_back(*it);
           }
         }
@@ -2779,7 +2843,8 @@ namespace Legion {
         {
           // See if we can still get it out of the queue
           AutoLock q_lock(queue_lock);
-          std::list<TaskOp*> &target_list = ready_queues[stealer];
+          MapperState &map_state = mapper_states[stealer];
+          std::list<TaskOp*> &target_list = map_state.ready_queue;
           for (std::set<const Task*>::const_iterator steal_it = 
                 to_steal.begin(); steal_it != to_steal.end(); steal_it++)
           {
@@ -2792,6 +2857,15 @@ namespace Legion {
               if ((*it) == target)
               {
                 target_list.erase(it);
+                if (target_list.empty())
+                {
+                  // If we already have a deferral event then we
+                  // are already not active so just clear it
+                  if (map_state.deferral_event.exists())
+                    map_state.deferral_event = RtEvent::NO_RT_EVENT;
+                  else
+                    decrement_active_mappers();
+                }
                 found = true;
                 break;
               }
@@ -2833,10 +2907,20 @@ namespace Legion {
               temp_stolen[idx]->get_context()->get_context_id();
             AutoLock q_lock(queue_lock);
             ContextState &state = context_states[ctx_id];
-            ready_queues[stealer].push_front(temp_stolen[idx]);
             if (state.active && (state.owned_tasks == 0))
               increment_active_contexts();
             state.owned_tasks++;
+            MapperState &map_state = mapper_states[stealer];
+            if (map_state.ready_queue.empty())
+            {
+              // Clear any deferral event if we are changing state
+              map_state.deferral_event = RtEvent::NO_RT_EVENT;
+              increment_active_mappers();
+            }
+            // Otherwise the state hasn't actually changed so
+            // we can't actually clear any deferral events
+            map_state.ready_queue.push_back(temp_stolen[idx]);
+            map_state.added_tasks = true;
           }
         }
 
@@ -2895,13 +2979,23 @@ namespace Legion {
       ContextID ctx_id = task->get_context()->get_context_id();
       AutoLock q_lock(queue_lock);
 #ifdef DEBUG_LEGION
-      assert(ready_queues.find(task->map_id) != ready_queues.end());
+      assert(mapper_states.find(task->map_id) != mapper_states.end());
 #endif
+      // Update the state for the context
       ContextState &state = context_states[ctx_id];
-      ready_queues[task->map_id].push_back(task);
       if (state.active && (state.owned_tasks == 0))
         increment_active_contexts();
       state.owned_tasks++;
+      // Also update the queue for the mapper
+      MapperState &map_state = mapper_states[task->map_id];
+      if (map_state.ready_queue.empty() || map_state.deferral_event.exists())
+      {
+        // Clear our deferral event since we are changing state
+        map_state.deferral_event = RtEvent::NO_RT_EVENT;
+        increment_active_mappers();
+      }
+      map_state.ready_queue.push_back(task);
+      map_state.added_tasks = true;
     }
 
     //--------------------------------------------------------------------------
@@ -2927,21 +3021,20 @@ namespace Legion {
       // Take a snapshot of our current mappers
       {
         AutoLock m_lock(mapper_lock,1,false/*exclusive*/);
+        // Fast path for no deferred mappers
         current_mappers.resize(mappers.size());
         unsigned idx = 0;
         for (std::map<MapperID,std::pair<MapperManager*,bool> >::
               const_iterator it = mappers.begin(); it != 
               mappers.end(); it++, idx++)
-        {
           current_mappers[idx] = 
             std::pair<MapperID,MapperManager*>(it->first, it->second.first);
-        }
       }
       for (std::vector<std::pair<MapperID,MapperManager*> >::const_iterator
             it = current_mappers.begin(); it != current_mappers.end(); it++)
       {
-        MapperID map_id = it->first;
-        MapperManager *mapper = it->second;
+        const MapperID map_id = it->first;
+        MapperManager *const mapper = it->second;
         Mapper::SelectMappingInput input;
         std::list<const Task*> &visible_tasks = input.ready_tasks;
         // We also need to capture the generations here
@@ -2949,20 +3042,72 @@ namespace Legion {
         // Pull out the current tasks for this mapping operation
         {
           AutoLock q_lock(queue_lock,1,false/*exclusive*/);
-          std::list<TaskOp*> &target_list = ready_queues[map_id];
-          for (std::list<TaskOp*>::const_iterator it = 
-                target_list.begin(); it != target_list.end(); it++)
+          MapperState &map_state = mapper_states[map_id];
+          // Only grap tasks if we don't have a deferral event
+          if (!map_state.deferral_event.exists())
           {
-            visible_tasks.push_back(*it);
-            visible_generations.push_back((*it)->get_generation());
+            std::list<TaskOp*> &target_list = map_state.ready_queue;
+            for (std::list<TaskOp*>::const_iterator it = 
+                  target_list.begin(); it != target_list.end(); it++)
+            {
+              visible_tasks.push_back(*it);
+              visible_generations.push_back((*it)->get_generation());
+            }  
           }
+          // Set our flag to check for added tasks while we do the mapper call
+          map_state.added_tasks = false;
         }
+        // Do this before anything else in case we don't have any tasks
+        if (!stealing_disabled)
+          mapper->perform_stealing(stealing_targets);
+        // Nothing to do if there are no visible tasks
+        if (visible_tasks.empty())
+          continue;
         // Ask the mapper which tasks it would like to schedule
         Mapper::SelectMappingOutput output;
         if (!visible_tasks.empty())
           mapper->invoke_select_tasks_to_map(&input, &output);
-        if (!stealing_disabled)
-          mapper->perform_stealing(stealing_targets); 
+        // If we had no entry then we better have gotten a mapper event
+        if (output.map_tasks.empty() && output.relocate_tasks.empty())
+        {
+          const RtEvent wait_on = output.deferral_event.impl;
+          if (wait_on.exists())
+          {
+            // Put this on the list of the deferred mappers
+            AutoLock q_lock(queue_lock);
+            MapperState &map_state = mapper_states[map_id];
+            // We have to check to see if any new tasks were added to 
+            // the ready queue while we were doing our mapper call, if 
+            // they were then we need to invoke select_tasks_to_map again
+            if (!map_state.added_tasks)
+            {
+#ifdef DEBUG_LEGION
+              assert(!map_state.deferral_event.exists());
+#endif
+              map_state.deferral_event = wait_on;
+              // Decrement the number of active mappers
+              decrement_active_mappers();
+            }
+          }
+          else // Very bad, error message
+            REPORT_LEGION_ERROR(ERROR_INVALID_MAPPER_OUTPUT,
+                          "Mapper %s failed to specify an output MapperEvent "
+                          "when returning from a call to 'select_tasks_to_map' "
+                          "that performed no other actions. Specifying a "
+                          "MapperEvent in such situation is necessary to avoid "
+                          "livelock conditions. Please return a "
+                          "'deferral_event' in the 'output' struct.",
+                          mapper->get_mapper_name())
+          // Launch a task to remove the deferred mapper event when it triggers
+          DeferMapperSchedulerArgs args;
+          args.proxy_this = this;
+          args.map_id = map_id;
+          args.deferral_event = wait_on;
+          runtime->issue_runtime_meta_task(args, LG_LATENCY_PRIORITY,
+                                           NULL, wait_on);
+          // We can continue because there is nothing left to do for this mapper
+          continue;
+        }
         // Process the results first remove the operations that were
         // selected to be mapped from the queue.  Note its possible
         // that we can't actually find the task because it has been
@@ -2994,7 +3139,8 @@ namespace Legion {
           // Reset the iterator to the start
           gen_it = visible_generations.begin();
           AutoLock q_lock(queue_lock);
-          std::list<TaskOp*> &rqueue = ready_queues[map_id];
+          MapperState &map_state = mapper_states[map_id];
+          std::list<TaskOp*> &rqueue = map_state.ready_queue;
           for (std::list<const Task*>::iterator vis_it = visible_tasks.begin(); 
                 vis_it != visible_tasks.end(); gen_it++)
           {
@@ -3008,6 +3154,13 @@ namespace Legion {
                   ((*gen_it) == (*it)->get_generation()))
               {
                 rqueue.erase(it);
+                if (rqueue.empty())
+                {
+                  if (map_state.deferral_event.exists())
+                    map_state.deferral_event = RtEvent::NO_RT_EVENT;
+                  else
+                    decrement_active_mappers();
+                }
                 found = true;
                 break;
               }
@@ -5392,6 +5545,9 @@ namespace Legion {
             instances.begin(); it != instances.end(); it++)
       {
         PhysicalManager *target_manager = it->manager;
+        // Garbage collector is not allowed to delete external instances
+        if (target_manager->is_external_instance())
+          continue;
         if (target_manager->try_active_deletion())
         {
           record_deleted_instance(target_manager);
@@ -5958,6 +6114,16 @@ namespace Legion {
           case DISTRIBUTED_RESOURCE_UPDATE:
             {
               runtime->handle_did_remote_resource_update(derez);
+              break;
+            }
+          case DISTRIBUTED_INVALIDATE:
+            {
+              runtime->handle_did_remote_invalidate(derez);
+              break;
+            }
+          case DISTRIBUTED_DEACTIVATE:
+            {
+              runtime->handle_did_remote_deactivate(derez);
               break;
             }
           case DISTRIBUTED_CREATE_ADD:
@@ -7731,7 +7897,7 @@ namespace Legion {
 #endif
       // Add any profiling requests
       if (runtime->profiler != NULL)
-        runtime->profiler->add_task_request(requests, vid, task);
+        runtime->profiler->add_task_request(requests, owner->task_id, vid,task);
       // Increment the number of outstanding tasks
 #ifdef DEBUG_LEGION
       runtime->increment_total_outstanding_tasks(task->task_id, false/*meta*/);
@@ -9289,6 +9455,11 @@ namespace Legion {
       layout_constraints_lock = Reservation::NO_RESERVATION;
       memory_manager_lock.destroy_reservation();
       memory_manager_lock = Reservation::NO_RESERVATION; 
+      for (std::map<Memory,MemoryManager*>::const_iterator it =
+            memory_managers.begin(); it != memory_managers.end(); it++)
+      {
+        delete it->second;
+      }
       memory_managers.clear();
       projection_lock.destroy_reservation();
       projection_lock = Reservation::NO_RESERVATION;
@@ -9395,8 +9566,27 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       LG_TASK_DESCRIPTIONS(lg_task_descriptions);
-      profiler = new LegionProfiler((local_utils.empty() ?
-                                     Processor::NO_PROC : utility_group),
+      // Check to see if we have any I/O processors, if we do then we'll do
+      // all our output on the I/O processors since we'll be writing to files 
+      // Otherwise we'll use our utility group, lacking even that then
+      // we'll just do it on whatever the executing processor is
+      Machine::ProcessorQuery local_io_procs(machine);
+      local_io_procs.local_address_space();
+      local_io_procs.only_kind(Processor::IO_PROC);
+      Processor target_proc_for_profiler = Processor::NO_PROC;
+      if (local_io_procs.count() > 1)
+      {
+        std::vector<Processor> io_procs;
+        for (Machine::ProcessorQuery::iterator it = local_io_procs.begin();
+              it != local_io_procs.end(); it++)
+          io_procs.push_back(*it);
+        target_proc_for_profiler = Processor::create_group(io_procs);
+      }
+      else if (local_io_procs.count() == 1)
+        target_proc_for_profiler = local_io_procs.first();
+      else if (!local_utils.empty())
+        target_proc_for_profiler = utility_group;
+      profiler = new LegionProfiler(target_proc_for_profiler,
                                     machine, this, LG_LAST_TASK_ID,
                                     lg_task_descriptions,
                                     Operation::LAST_OP_KIND,
@@ -12235,10 +12425,18 @@ namespace Legion {
         if (finder != task_table.end())
           return finder->second;
       }
-      TaskImpl *result = new TaskImpl(task_id, this);
       AutoLock tv_lock(task_variant_lock);
-      task_table[task_id] = result;
-      return result;
+      std::map<TaskID,TaskImpl*>::const_iterator finder = 
+        task_table.find(task_id);
+      // Check to see if we lost the race
+      if (finder == task_table.end())
+      {
+        TaskImpl *result = new TaskImpl(task_id, this);
+        task_table[task_id] = result;
+        return result;
+      }
+      else // Lost the race as it already exists
+        return finder->second;
     }
 
     //--------------------------------------------------------------------------
@@ -12274,10 +12472,14 @@ namespace Legion {
         if (finder != memory_managers.end())
           return finder->second;
       }
-      // Otherwise, if we haven't made it yet, make it now
-      MemoryManager *result = new MemoryManager(mem, this);
-      // Put it in the map
+      // Not there?  Take exclusive lock and check again, create if needed
       AutoLock m_lock(memory_manager_lock);
+      std::map<Memory,MemoryManager*>::const_iterator finder =
+        memory_managers.find(mem);
+      if (finder != memory_managers.end())
+        return finder->second;
+      // Really do need to create it (and put it in the map)
+      MemoryManager *result = new MemoryManager(mem, this);
       memory_managers[mem] = result;
       return result;
     }
@@ -13025,6 +13227,24 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    void Runtime::send_did_remote_invalidate(AddressSpaceID target,
+                                             Serializer &rez)
+    //--------------------------------------------------------------------------
+    {
+      find_messenger(target)->send_message(rez, DISTRIBUTED_INVALIDATE,
+                                    REFERENCE_VIRTUAL_CHANNEL, true/*flush*/);
+    }
+
+    //--------------------------------------------------------------------------
+    void Runtime::send_did_remote_deactivate(AddressSpaceID target,
+                                             Serializer &rez)
+    //--------------------------------------------------------------------------
+    {
+      find_messenger(target)->send_message(rez, DISTRIBUTED_DEACTIVATE,
+                                    REFERENCE_VIRTUAL_CHANNEL, true/*flush*/);
+    }
+
+    //--------------------------------------------------------------------------
     void Runtime::send_did_add_create_reference(AddressSpaceID target,
                                                  Serializer &rez)
     //--------------------------------------------------------------------------
@@ -13440,11 +13660,9 @@ namespace Legion {
                                                         Serializer &rez)
     //--------------------------------------------------------------------------
     {
-      // This can't go on the context virtual channel due to the possiblility
-      // of deadlock in the case where we need to page in the result context
       find_messenger(target)->send_message(rez,
           SEND_REMOTE_CONTEXT_PHYSICAL_RESPONSE,
-          DEFAULT_VIRTUAL_CHANNEL, true/*flush*/, true/*response*/);
+          CONTEXT_VIRTUAL_CHANNEL, true/*flush*/, true/*response*/);
     }
 
     //--------------------------------------------------------------------------
@@ -14086,6 +14304,20 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    void Runtime::handle_did_remote_invalidate(Deserializer &derez)
+    //--------------------------------------------------------------------------
+    {
+      DistributedCollectable::handle_did_remote_invalidate(this, derez);
+    }
+
+    //--------------------------------------------------------------------------
+    void Runtime::handle_did_remote_deactivate(Deserializer &derez)
+    //--------------------------------------------------------------------------
+    {
+      DistributedCollectable::handle_did_remote_deactivate(this, derez);
+    }
+
+    //--------------------------------------------------------------------------
     void Runtime::handle_did_create_add(Deserializer &derez)
     //--------------------------------------------------------------------------
     {
@@ -14483,7 +14715,7 @@ namespace Legion {
       UniqueID context_uid;
       derez.deserialize(context_uid);
       InnerContext *context = find_context(context_uid);
-      context->invalidate_region_tree_contexts();
+      context->invalidate_remote_tree_contexts(derez);
     }
     
     //--------------------------------------------------------------------------
@@ -14958,13 +15190,13 @@ namespace Legion {
       if (program_order_execution)
       {
         ApEvent term_event = op->get_completion_event();
-        ctx->add_to_dependence_queue(op, false/*has_lock*/, precondition);
+        ctx->add_to_dependence_queue(op, true/*first*/, precondition);
         ctx->begin_task_wait(true/*from runtime*/);
         term_event.lg_wait();
         ctx->end_task_wait();
       }
       else
-        ctx->add_to_dependence_queue(op, false/*has lock*/, precondition);
+        ctx->add_to_dependence_queue(op, true/*first*/, precondition);
     }
     
     //--------------------------------------------------------------------------
@@ -15113,6 +15345,9 @@ namespace Legion {
     void Runtime::free_distributed_id(DistributedID did)
     //--------------------------------------------------------------------------
     {
+      // Special case for did 0 on shutdown
+      if (did == 0)
+        return;
       did &= LEGION_DISTRIBUTED_ID_MASK;
 #ifdef DEBUG_LEGION
       // Should only be getting back our own DIDs
@@ -15228,6 +15463,36 @@ namespace Legion {
       AutoLock d_lock(distributed_collectable_lock,1,false/*exclusive*/);
       std::map<DistributedID,DistributedCollectable*>::const_iterator finder = 
         dist_collectables.find(to_find);
+#ifdef DEBUG_LEGION
+      if (finder == dist_collectables.end())
+        log_run.error("Unable to find distributed collectable %llx "
+                    "with type %lld", did, LEGION_DISTRIBUTED_HELP_DECODE(did));
+      assert(finder != dist_collectables.end());
+#endif
+      return finder->second;
+    }
+
+    //--------------------------------------------------------------------------
+    DistributedCollectable* Runtime::find_distributed_collectable(
+                                              DistributedID did, RtEvent &ready)
+    //--------------------------------------------------------------------------
+    {
+      const DistributedID to_find = LEGION_DISTRIBUTED_ID_FILTER(did);
+      AutoLock d_lock(distributed_collectable_lock,1,false/*exclusive*/);
+      std::map<DistributedID,DistributedCollectable*>::const_iterator finder = 
+        dist_collectables.find(to_find);
+      if (finder == dist_collectables.end())
+      {
+        // Check to see if it is in the pending set too
+        std::map<DistributedID,
+          std::pair<DistributedCollectable*,RtUserEvent> >::const_iterator
+            pending_finder = pending_collectables.find(to_find);
+        if (pending_finder != pending_collectables.end())
+        {
+          ready = pending_finder->second.second;
+          return pending_finder->second.first;
+        }
+      }
 #ifdef DEBUG_LEGION
       if (finder == dist_collectables.end())
         log_run.error("Unable to find distributed collectable %llx "
@@ -19306,6 +19571,10 @@ namespace Legion {
                               const void *userdata, size_t userlen, Processor p)
     //--------------------------------------------------------------------------
     {
+      // We can also finalize our virtual instance unless we're running with 
+      // separate runtime instances, in which case we'll just leak it
+      if (!Runtime::separate_runtime_instances)
+        VirtualManager::finalize_virtual_instance();
       // Finalize the runtime and then delete it
       Runtime *runtime = get_runtime(p);
       runtime->finalize_runtime();
@@ -19450,6 +19719,11 @@ namespace Legion {
             trigger_args->op->trigger_mapping(); 
             break;
           }
+        case LG_DEFER_MAPPER_SCHEDULER_TASK_ID:
+          {
+            ProcessorManager::handle_defer_mapper(args);
+            break;
+          }
         case LG_DEFERRED_RECYCLE_ID:
           {
             const DeferredRecycleArgs *deferred_recycle_args = 
@@ -19540,7 +19814,7 @@ namespace Legion {
             TopFinishArgs *fargs = (TopFinishArgs*)args; 
             // Do this before deleting remote contexts
             fargs->ctx->invalidate_region_tree_contexts();
-            fargs->ctx->invalidate_remote_contexts();
+            fargs->ctx->free_remote_contexts();
             if (fargs->ctx->remove_reference())
               delete fargs->ctx;
             Runtime *runtime = Runtime::get_runtime(p);
@@ -19625,7 +19899,7 @@ namespace Legion {
             InnerContext::AddToDepQueueArgs *dargs = 
               (InnerContext::AddToDepQueueArgs*)args;
             dargs->proxy_this->add_to_dependence_queue(dargs->op,
-                                 true/*has lock*/, dargs->op_pre);
+                                 false/*true*/, dargs->op_pre);
             break;
           }
         case LG_WINDOW_WAIT_TASK_ID:
@@ -19721,6 +19995,16 @@ namespace Legion {
             req_args->proxy_this->process_semantic_request(
                           req_args->tag, req_args->source, 
                           false, false, RtUserEvent::NO_RT_USER_EVENT);
+            break;
+          }
+        case LG_INDEX_SPACE_DEFER_CHILD_TASK_ID:
+          {
+            IndexSpaceNode::defer_node_child_request(args);
+            break;
+          }
+        case LG_INDEX_PART_DEFER_CHILD_TASK_ID:
+          {
+            IndexPartNode::defer_node_child_request(args);
             break;
           }
         case LG_SELECT_TUNABLE_TASK_ID:
@@ -19885,11 +20169,14 @@ namespace Legion {
             IndexSpaceNode::handle_tighten_index_space(args);
             break;
           }
-        case LG_PROF_OUTPUT_TASK_ID:
+        case LG_REMOTE_PHYSICAL_REQUEST_TASK_ID:
           {
-            const LegionProfiler::LgOutputTaskArgs *oargs = 
-              (const LegionProfiler::LgOutputTaskArgs*)args;
-            oargs->profiler->perform_intermediate_output();
+            RemoteContext::defer_physical_request(args);
+            break;
+          }
+        case LG_REMOTE_PHYSICAL_RESPONSE_TASK_ID:
+          {
+            RemoteContext::defer_physical_response(args);
             break;
           }
         case LG_RETRY_SHUTDOWN_TASK_ID:

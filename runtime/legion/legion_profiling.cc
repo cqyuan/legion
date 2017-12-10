@@ -14,14 +14,14 @@
  */
 
 #include "legion.h"
-#include "cmdline.h"
-#include "legion_ops.h"
-#include "legion_tasks.h"
-#include "legion_profiling.h"
-#include "legion_profiling_serializer.h"
+#include "realm/cmdline.h"
+#include "legion/legion_ops.h"
+#include "legion/legion_tasks.h"
+#include "legion/legion_profiling.h"
+#include "legion/legion_profiling_serializer.h"
 
-#include <cstring>
-#include <cstdlib>
+#include <string.h>
+#include <stdlib.h>
 
 namespace Legion {
   namespace Internal {
@@ -101,7 +101,7 @@ namespace Legion {
       kind.name = strdup(name);
       kind.overwrite = overwrite;
       const size_t diff = sizeof(TaskKind) + strlen(name);
-      owner->increase_footprint(diff);
+      owner->update_footprint(diff, this);
     }
 
     //--------------------------------------------------------------------------
@@ -116,7 +116,7 @@ namespace Legion {
       var.variant_id = variant_id;
       var.name = strdup(variant_name);
       const size_t diff = sizeof(TaskVariant) + strlen(variant_name);
-      owner->increase_footprint(diff);
+      owner->update_footprint(diff, this);
     }
 
     //--------------------------------------------------------------------------
@@ -127,7 +127,7 @@ namespace Legion {
       OperationInstance &inst = operation_instances.back();
       inst.op_id = op->get_unique_op_id();
       inst.kind = op->get_operation_kind();
-      owner->increase_footprint(sizeof(OperationInstance));
+      owner->update_footprint(sizeof(OperationInstance), this);
     }
 
     //--------------------------------------------------------------------------
@@ -138,7 +138,7 @@ namespace Legion {
       MultiTask &task = multi_tasks.back();
       task.op_id = op->get_unique_op_id();
       task.task_id = task_id;
-      owner->increase_footprint(sizeof(MultiTask));
+      owner->update_footprint(sizeof(MultiTask), this);
     }
 
     //--------------------------------------------------------------------------
@@ -149,11 +149,12 @@ namespace Legion {
       SliceOwner &task = slice_owners.back();
       task.parent_id = pid;
       task.op_id = id;
-      owner->increase_footprint(sizeof(SliceOwner));
+      owner->update_footprint(sizeof(SliceOwner), this);
     }
 
     //--------------------------------------------------------------------------
-    void LegionProfInstance::process_task(VariantID variant_id, UniqueID op_id,
+    void LegionProfInstance::process_task(
+            TaskID task_id, VariantID variant_id, UniqueID op_id,
             const Realm::ProfilingMeasurements::OperationTimeline &timeline,
             const Realm::ProfilingMeasurements::OperationProcessorUsage &usage,
             const Realm::ProfilingMeasurements::OperationEventWaits &waits)
@@ -165,6 +166,7 @@ namespace Legion {
       task_infos.push_back(TaskInfo()); 
       TaskInfo &info = task_infos.back();
       info.op_id = op_id;
+      info.task_id = task_id;
       info.variant_id = variant_id;
       info.proc_id = usage.proc.id;
       info.create = timeline.create_time;
@@ -185,7 +187,7 @@ namespace Legion {
         }
       }
       const size_t diff = sizeof(TaskInfo) + num_intervals * sizeof(WaitInfo);
-      owner->increase_footprint(diff);
+      owner->update_footprint(diff, this);
     }
 
     //--------------------------------------------------------------------------
@@ -221,7 +223,7 @@ namespace Legion {
         }
       }
       const size_t diff = sizeof(MetaInfo) + num_intervals * sizeof(WaitInfo);
-      owner->increase_footprint(diff);
+      owner->update_footprint(diff, this);
     }
 
     //--------------------------------------------------------------------------
@@ -257,7 +259,7 @@ namespace Legion {
         }
       }
       const size_t diff = sizeof(MetaInfo) + num_intervals * sizeof(WaitInfo);
-      owner->increase_footprint(diff);
+      owner->update_footprint(diff, this);
     }
 
     //--------------------------------------------------------------------------
@@ -280,7 +282,7 @@ namespace Legion {
       info.start = timeline.start_time;
       // use complete_time instead of end_time to include async work
       info.stop = timeline.complete_time;
-      owner->increase_footprint(sizeof(CopyInfo));
+      owner->update_footprint(sizeof(CopyInfo), this);
     }
 
     //--------------------------------------------------------------------------
@@ -301,7 +303,7 @@ namespace Legion {
       info.start = timeline.start_time;
       // use complete_time instead of end_time to include async work
       info.stop = timeline.complete_time;
-      owner->increase_footprint(sizeof(FillInfo));
+      owner->update_footprint(sizeof(FillInfo), this);
     }
 
     //--------------------------------------------------------------------------
@@ -314,7 +316,7 @@ namespace Legion {
       info.op_id = op_id;
       info.inst_id = inst.id;
       info.create = create;
-      owner->increase_footprint(sizeof(InstCreateInfo));
+      owner->update_footprint(sizeof(InstCreateInfo), this);
     }
 
     //--------------------------------------------------------------------------
@@ -328,7 +330,7 @@ namespace Legion {
       info.inst_id = usage.instance.id;
       info.mem_id = usage.memory.id;
       info.size = usage.bytes;
-      owner->increase_footprint(sizeof(InstUsageInfo));
+      owner->update_footprint(sizeof(InstUsageInfo), this);
     }
 
     //--------------------------------------------------------------------------
@@ -342,7 +344,7 @@ namespace Legion {
       info.inst_id = timeline.instance.id;
       info.create = timeline.create_time;
       info.destroy = timeline.delete_time;
-      owner->increase_footprint(sizeof(InstTimelineInfo));
+      owner->update_footprint(sizeof(InstTimelineInfo), this);
     }
 
     //--------------------------------------------------------------------------
@@ -360,7 +362,7 @@ namespace Legion {
       info.start = timeline.start_time;
       // use complete_time instead of end_time to include async work
       info.stop = timeline.complete_time;
-      owner->increase_footprint(sizeof(PartitionInfo));
+      owner->update_footprint(sizeof(PartitionInfo), this);
     }
 
     //--------------------------------------------------------------------------
@@ -375,7 +377,7 @@ namespace Legion {
       info.start = start;
       info.stop = stop;
       info.proc_id = proc.id;
-      owner->increase_footprint(sizeof(MessageInfo));
+      owner->update_footprint(sizeof(MessageInfo), this);
     }
 
     //--------------------------------------------------------------------------
@@ -391,7 +393,7 @@ namespace Legion {
       info.start = start;
       info.stop = stop;
       info.proc_id = proc.id;
-      owner->increase_footprint(sizeof(MapperCallInfo));
+      owner->update_footprint(sizeof(MapperCallInfo), this);
     }
 
     //--------------------------------------------------------------------------
@@ -405,7 +407,7 @@ namespace Legion {
       info.start = start;
       info.stop = stop;
       info.proc_id = proc.id;
-      owner->increase_footprint(sizeof(RuntimeCallInfo));
+      owner->update_footprint(sizeof(RuntimeCallInfo), this);
     }
 
 #ifdef LEGION_PROF_SELF_PROFILE
@@ -421,7 +423,7 @@ namespace Legion {
       info.op_id = op_id;
       info.start = start;
       info.stop = stop;
-      owner->increase_footprint(sizeof(ProfTaskInfo));
+      owner->update_footprint(sizeof(ProfTaskInfo), this);
     }
 #endif
 
@@ -745,8 +747,7 @@ namespace Legion {
 #ifndef DEBUG_LEGION
         total_outstanding_requests(1/*start with guard*/),
 #endif
-        local_io_proc(Processor::NO_PROC),
-        total_memory_footprint(0), finalizing(false)
+        total_memory_footprint(0)
     //--------------------------------------------------------------------------
     {
       profiler_lock = Reservation::create_reservation();
@@ -832,20 +833,6 @@ namespace Legion {
         total_outstanding_requests[idx] = 0;
       total_outstanding_requests[LEGION_PROF_META] = 1; // guard
 #endif
-      // Get a processor group for all the local I/O processors if we have any 
-      Machine::ProcessorQuery local_io_procs(machine);
-      local_io_procs.local_address_space();
-      local_io_procs.only_kind(Processor::IO_PROC);
-      if (local_io_procs.count() > 1)
-      {
-        std::vector<Processor> io_procs;
-        for (Machine::ProcessorQuery::iterator it = local_io_procs.begin();
-              it != local_io_procs.end(); it++)
-          io_procs.push_back(*it);
-        local_io_proc = Processor::create_group(io_procs);
-      }
-      else if (local_io_procs.count() == 1)
-        local_io_proc = local_io_procs.first();
     }
 
     //--------------------------------------------------------------------------
@@ -934,7 +921,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void LegionProfiler::add_task_request(Realm::ProfilingRequestSet &requests,
-                                          TaskID tid, SingleTask *task)
+                                    TaskID tid, VariantID vid, SingleTask *task)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
@@ -944,6 +931,7 @@ namespace Legion {
 #endif
       ProfilingInfo info(this, LEGION_PROF_TASK); 
       info.id = tid;
+      info.id2 = vid;
       info.op_id = task->get_unique_id();
       Realm::ProfilingRequest &req = requests.add_request((target_proc.exists())
                 ? target_proc : Processor::get_executing_processor(),
@@ -1094,7 +1082,7 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     void LegionProfiler::add_task_request(Realm::ProfilingRequestSet &requests,
-                                          TaskID tid, UniqueID uid)
+                                        TaskID tid, VariantID vid, UniqueID uid)
     //--------------------------------------------------------------------------
     {
 #ifdef DEBUG_LEGION
@@ -1104,6 +1092,7 @@ namespace Legion {
 #endif
       ProfilingInfo info(this, LEGION_PROF_TASK); 
       info.id = tid;
+      info.id2 = vid;
       info.op_id = uid;
       Realm::ProfilingRequest &req = requests.add_request((target_proc.exists())
                 ? target_proc : Processor::get_executing_processor(),
@@ -1270,7 +1259,7 @@ namespace Legion {
             // Ignore anything that was predicated false for now
             if (has_usage)
               thread_local_profiling_instance->process_task(info->id, 
-                  info->op_id, timeline, usage, waits);
+                  info->id2, info->op_id, timeline, usage, waits);
             break;
           }
         case LEGION_PROF_META:
@@ -1415,11 +1404,6 @@ namespace Legion {
     void LegionProfiler::finalize(void)
     //--------------------------------------------------------------------------
     {
-#ifdef DEBUG_LEGION
-      assert(!finalizing);
-#endif
-      // Set the flag indicating that we are finalizing
-      finalizing = true;
       // Remove our guard outstanding request
 #ifdef DEBUG_LEGION
       decrement_total_outstanding_requests(LEGION_PROF_META);
@@ -1581,77 +1565,29 @@ namespace Legion {
 #endif
 
     //--------------------------------------------------------------------------
-    void LegionProfiler::increase_footprint(size_t diff)
+    void LegionProfiler::update_footprint(size_t diff, LegionProfInstance *inst)
     //--------------------------------------------------------------------------
     {
       size_t footprint = __sync_add_and_fetch(&total_memory_footprint, diff);
       if (footprint > output_footprint_threshold)
       {
-        bool launch_output = false;
-        if (!finalizing && !output_pending)
+        if (!serializer->is_thread_safe())
         {
-          // Retake the lock to make sure we didn't loose the race
+          // Need a lock to protect the serializer
           AutoLock p_lock(profiler_lock);
-          if (!output_pending)
-          {
-            launch_output = true;
-            output_pending = true;
-          }
+          diff = inst->dump_inter(serializer);
         }
-        if (launch_output)
-        {
-          // Launching this increments the total outstanding requests
-          // so we don't need to worry about early clean-up
-          LgOutputTaskArgs args;
-          args.profiler = this;
-          runtime->issue_runtime_meta_task(args, LG_LOW_PRIORITY, NULL/*op*/,
-              RtEvent::NO_RT_EVENT, local_io_proc);
-        }
-      }
-    }
-
-    //--------------------------------------------------------------------------
-    bool LegionProfiler::decrease_footprint(size_t diff)
-    //--------------------------------------------------------------------------
-    {
-      // If we're finalizing don't keep doing the slow path
-      if (finalizing)
-        return false;
-      // Do this while holding the lock so we get atomicity correct
-      AutoLock p_lock(profiler_lock);
+        else
+          diff = inst->dump_inter(serializer);
 #ifdef DEBUG_LEGION
-      assert(output_pending); // we are the pending output
+#ifndef NDEBUG
+        footprint = 
 #endif
-      output_pending = false;
-      size_t footprint = __sync_sub_and_fetch(&total_memory_footprint, diff); 
-      // Keep going if we still have too much footprint
-      if (footprint > output_footprint_threshold)
-      {
-        output_pending = true;
-        return true;
-      }
-      else
-        return false;
-    }
-
-    //--------------------------------------------------------------------------
-    void LegionProfiler::perform_intermediate_output(void)
-    //--------------------------------------------------------------------------
-    {
-      size_t diff = 0;
-      // See if we have a local profiler instance to decrease the footprint
-      if (thread_local_profiling_instance != NULL)
-        // No need for a lock since only one of these runs at a time
-        diff = thread_local_profiling_instance->dump_inter(serializer);
-      const bool launch_again = decrease_footprint(diff);
-      if (launch_again)
-      {
-        // Launching this increments the total outstanding requests
-        // so we don't need to worry about early clean-up
-        LgOutputTaskArgs args;
-        args.profiler = this;
-        runtime->issue_runtime_meta_task(args, LG_LOW_PRIORITY, NULL/*op*/,
-            RtEvent::NO_RT_EVENT, local_io_proc);
+#endif
+          __sync_fetch_and_sub(&total_memory_footprint, diff);
+#ifdef DEBUG_LEGION
+        assert(footprint >= diff); // check for wrap-around
+#endif
       }
     }
 

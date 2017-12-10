@@ -14,17 +14,17 @@
  */
 
 #include "legion.h"
-#include "runtime.h"
-#include "legion_ops.h"
-#include "legion_tasks.h"
-#include "region_tree.h"
-#include "legion_spy.h"
-#include "legion_trace.h"
-#include "legion_profiling.h"
-#include "legion_instances.h"
-#include "legion_views.h"
-#include "legion_analysis.h"
-#include "legion_context.h"
+#include "legion/runtime.h"
+#include "legion/legion_ops.h"
+#include "legion/legion_tasks.h"
+#include "legion/region_tree.h"
+#include "legion/legion_spy.h"
+#include "legion/legion_trace.h"
+#include "legion/legion_profiling.h"
+#include "legion/legion_instances.h"
+#include "legion/legion_views.h"
+#include "legion/legion_analysis.h"
+#include "legion/legion_context.h"
 
 namespace Legion {
   namespace Internal {
@@ -355,6 +355,8 @@ namespace Legion {
           finder->second |= mask;
         valid_fields |= mask;
       }
+      if (pre.exists())
+        return pre;
       return RtEvent::NO_RT_EVENT;
     }
 
@@ -943,7 +945,7 @@ namespace Legion {
 #endif
       const FieldMask &split_mask = split_masks[depth];
       const FieldVersions &local_versions = field_versions[depth];
-      if (!split_prev || !!split_mask)
+      if (!split_prev || !split_mask)
       {
         // If we don't care about the split previous mask then we can
         // just copy over what we need
@@ -1593,7 +1595,7 @@ namespace Legion {
         else if (!!remaining_fields)
           (*it)->remove_acquisition(op, node, remaining_fields);
         if (!remaining_fields)
-          return;
+          break;
       }
       if (!to_delete.empty())
       {
@@ -1840,7 +1842,7 @@ namespace Legion {
         else if (!!remaining_fields)
           (*it)->remove_restriction(op, node, remaining_fields);
         if (!remaining_fields)
-          return;
+          break;
       }
       if (!to_delete.empty())
       {
@@ -3931,7 +3933,12 @@ namespace Legion {
       // Finally record any valid above views
       for (LegionMap<LogicalView*,FieldMask>::aligned::const_iterator it = 
             valid_above.begin(); it != valid_above.end(); it++)
+      {
         composite_view->record_valid_view(it->first, it->second);
+        // We also have to record these as dirty fields to make 
+        // sure that we issue copies from them if necessary
+        composite_view->record_dirty_fields(it->second);
+      }
     }
 
     //--------------------------------------------------------------------------
@@ -6417,9 +6424,11 @@ namespace Legion {
 #endif
     //--------------------------------------------------------------------------
     {
-      // If we are not the owner, add a valid reference
+      // If we're not the owner then add a remove gc ref that will
+      // be removed by the owner once no copy of this version state
+      // is valid anywhere in the system
       if (!is_owner())
-        add_base_valid_ref(REMOTE_DID_REF);
+        add_base_gc_ref(REMOTE_DID_REF);
 #ifdef LEGION_GC
       log_garbage.info("GC Version State %lld %d", 
           LEGION_DISTRIBUTED_ID_FILTER(did), local_space);
@@ -6441,8 +6450,6 @@ namespace Legion {
     VersionState::~VersionState(void)
     //--------------------------------------------------------------------------
     {
-      if (is_owner() && registered_with_runtime)
-        unregister_with_runtime(REFERENCE_VIRTUAL_CHANNEL);
       state_lock.destroy_reservation();
       state_lock = Reservation::NO_RESERVATION;
 #ifdef DEBUG_LEGION
@@ -6832,43 +6839,34 @@ namespace Legion {
     void VersionState::notify_active(ReferenceMutator *mutator)
     //--------------------------------------------------------------------------
     {
-      // Do nothing 
+      // This is a little weird, but we track validity in active
+      // for VersionStates so that we can use the valid references
+      // to track if any copy of a VersionState is valid anywhere
+      // The owner then holds gc references to all remote version
+      // state and can remove them when no copy of the version 
+      // state is valid anywhere else
+#ifdef DEBUG_LEGION
+      // This should be monotonic on all instances of the version state
+      assert(currently_valid);
+#endif
     }
 
     //--------------------------------------------------------------------------
     void VersionState::notify_inactive(ReferenceMutator *mutator)
     //--------------------------------------------------------------------------
     {
-      // Do nothing 
-    }
-
-    //--------------------------------------------------------------------------
-    void VersionState::notify_valid(ReferenceMutator *mutator)
-    //--------------------------------------------------------------------------
-    {
-      // Views have their valid references added when they are inserted 
 #ifdef DEBUG_LEGION
-      assert(currently_valid); // should be monotonic
-#endif
-    }
-
-    //--------------------------------------------------------------------------
-    void VersionState::notify_invalid(ReferenceMutator *mutator)
-    //--------------------------------------------------------------------------
-    {
-      AutoLock s_lock(state_lock,1,false/*exclusive*/);
-#ifdef DEBUG_LEGION
-      // Should be monotonic
       assert(currently_valid);
       currently_valid = false;
 #endif
-      // When we are no longer valid we have to send a reference back
-      // to our owner to indicate that we are no longer valid
-      // This reference was given to us by the owner when it sent the
-      // information to create this version state object
-      // (see VersionState::send_version_state')
-      if (!is_owner())
-        send_remote_valid_update(owner_space, mutator, 1/*count*/,false/*add*/);
+      // If we're the owner remove the gc references that are held by 
+      // each remote copy of the version state object, see the constructor
+      // of the VersionState to see where this was added
+      if (is_owner() && has_remote_instances())
+      {
+        UpdateReferenceFunctor<GC_REF_KIND,false/*add*/> functor(this, mutator);
+        map_over_remote_instances(functor);
+      }
       // We can clear out our open children since we don't need them anymore
       // which will also remove the valid references
       open_children.clear();
@@ -6884,6 +6882,25 @@ namespace Legion {
         if (it->first->remove_nested_valid_ref(did, mutator))
           delete it->first;
       }
+    }
+
+    //--------------------------------------------------------------------------
+    void VersionState::notify_valid(ReferenceMutator *mutator)
+    //--------------------------------------------------------------------------
+    {
+      // If we are not the owner, then we have to tell the owner we're valid
+      if (!is_owner())
+        send_remote_valid_update(owner_space, mutator, 1/*count*/, true/*add*/);
+    }
+
+    //--------------------------------------------------------------------------
+    void VersionState::notify_invalid(ReferenceMutator *mutator)
+    //--------------------------------------------------------------------------
+    {
+      // When we are no longer valid we have to send a reference back
+      // to our owner to indicate that we are no longer valid
+      if (!is_owner())
+        send_remote_valid_update(owner_space, mutator, 1/*count*/,false/*add*/);
     }
 
     //--------------------------------------------------------------------------
@@ -7357,9 +7374,6 @@ namespace Legion {
       // We should have had a request for this already
       assert(!has_remote_instance(target));
 #endif
-      // Add a remote valid did reference to ourselves that will be
-      // removed when the remote copy is no longer valid
-      add_base_valid_ref(REMOTE_DID_REF);
       Serializer rez;
       {
         RezCheck z(rez);

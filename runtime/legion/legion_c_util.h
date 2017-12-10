@@ -23,12 +23,12 @@
  */
 
 #include "legion.h"
-#include "legion_c.h"
-#include "legion_mapping.h"
-#include "mapping_utilities.h"
+#include "legion/legion_c.h"
+#include "legion/legion_mapping.h"
+#include "mappers/mapping_utilities.h"
 
-#include <cstdlib>
-#include <cstring>
+#include <stdlib.h>
+#include <string.h>
 #include <algorithm>
 
 namespace Legion {
@@ -88,6 +88,7 @@ namespace Legion {
       NEW_OPAQUE_WRAPPER(legion_copy_launcher_t, CopyLauncher *);
       NEW_OPAQUE_WRAPPER(legion_acquire_launcher_t, AcquireLauncher *);
       NEW_OPAQUE_WRAPPER(legion_release_launcher_t, ReleaseLauncher *);
+      NEW_OPAQUE_WRAPPER(legion_attach_launcher_t, AttachLauncher *);
       NEW_OPAQUE_WRAPPER(legion_must_epoch_launcher_t, MustEpochLauncher *);
       NEW_OPAQUE_WRAPPER(legion_physical_region_t, PhysicalRegion *);
       NEW_OPAQUE_WRAPPER(legion_accessor_array_1d_t, ArrayAccessor1D *);
@@ -524,6 +525,7 @@ namespace Legion {
         options_.inline_task = options.inline_task;
         options_.stealable = options.stealable;
         options_.map_locally = options.map_locally;
+        options_.parent_priority = options.parent_priority;
         return options_;
       }
 
@@ -534,6 +536,7 @@ namespace Legion {
         options.inline_task = options_.inline_task;
         options.stealable = options_.stealable;
         options.map_locally = options_.map_locally;
+        options.parent_priority = options_.parent_priority;
         return options;
       }
 

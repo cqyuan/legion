@@ -15,9 +15,9 @@
 
 // sampling profiler implementation for Realm
 
-#include "sampling_impl.h"
-#include "cmdline.h"
-#include "timers.h"
+#include "realm/sampling_impl.h"
+#include "realm/cmdline.h"
+#include "realm/timers.h"
 
 #include <unistd.h>
 #include <errno.h>
@@ -374,6 +374,9 @@ namespace Realm {
   {
     if(is_default)
       DefaultSamplerHandler::get_handler().remove_default_sampler(this);
+
+    delete sampling_start;
+    delete sampling_time;
   }
 
   void SamplingProfilerImpl::flush_data(void)

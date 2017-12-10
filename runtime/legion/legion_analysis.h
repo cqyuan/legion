@@ -16,10 +16,10 @@
 #ifndef __LEGION_ANALYSIS_H__
 #define __LEGION_ANALYSIS_H__
 
-#include "legion_types.h"
-#include "legion_utilities.h"
-#include "legion_allocation.h"
-#include "garbage_collection.h"
+#include "legion/legion_types.h"
+#include "legion/legion_utilities.h"
+#include "legion/legion_allocation.h"
+#include "legion/garbage_collection.h"
 
 namespace Legion {
   namespace Internal {
@@ -284,7 +284,7 @@ namespace Legion {
       std::vector<PhysicalState*>      physical_states;
       std::vector<FieldVersions>       field_versions;
       LegionVector<FieldMask>::aligned split_masks;
-    }; 
+    };
 
     /**
      * \class Restriction

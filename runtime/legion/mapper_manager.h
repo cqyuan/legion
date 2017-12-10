@@ -16,8 +16,8 @@
 #ifndef __MAPPER_MANAGER_H__
 #define __MAPPER_MANAGER_H__
 
-#include "legion_types.h"
-#include "legion_mapping.h"
+#include "legion/legion_types.h"
+#include "legion/legion_mapping.h"
 
 namespace Legion {
   namespace Internal {
@@ -564,9 +564,6 @@ namespace Legion {
       Reservation mapper_lock;
     protected:
       std::vector<MappingCallInfo*> available_infos;
-    protected:
-      unsigned next_mapper_event;
-      std::map<unsigned,RtUserEvent> mapper_events;
     protected: // Steal request information
       // Mappers on other processors that we've tried to steal from and failed
       std::set<Processor> steal_blacklist;

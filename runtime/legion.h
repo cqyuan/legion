@@ -13,7 +13,26 @@
  * limitations under the License.
  */
 
+// decide whether we want C and/or C++ bindings (default matches host language)
+//
+// each set of bindings has its own include-once ifdef armor, allowing the
+//  second set of bindings to be loaded even if the first already has been
+#if !defined(LEGION_ENABLE_C_BINDINGS) && !defined(LEGION_DISABLE_C_BINDINGS)
+  #ifndef __cplusplus
+    #define LEGION_ENABLE_C_BINDINGS
+  #endif
+#endif
+#if !defined(LEGION_ENABLE_CXX_BINDINGS) && !defined(LEGION_DISABLE_CXX_BINDINGS)
+  #ifdef __cplusplus
+    #define LEGION_ENABLE_CXX_BINDINGS
+  #endif
+#endif
 
+#ifdef LEGION_ENABLE_C_BINDINGS
+#include "legion/legion_c.h"
+#endif
+
+#ifdef LEGION_ENABLE_CXX_BINDINGS
 #ifndef __LEGION_RUNTIME_H__
 #define __LEGION_RUNTIME_H__
 
@@ -30,9 +49,9 @@
  * Legion C++ API
  */
 
-#include "legion_types.h"
-#include "legion_domain.h"
-#include "legion_constraint.h"
+#include "legion/legion_types.h"
+#include "legion/legion_domain.h"
+#include "legion/legion_constraint.h"
 
 // temporary helper macro to turn link errors into runtime errors
 #define UNIMPLEMENTED_METHOD(retval) do { assert(0); return retval; } while(0)
@@ -1879,9 +1898,14 @@ namespace Legion {
       inline void attach_hdf5(const char *file_name,
                               const std::map<FieldID,const char*> &field_map,
                               LegionFileMode mode);
-    public:
-      inline void add_field_pointer(FieldID fid, void *ptr);
-      inline void set_pitch(unsigned dim, size_t pitch);
+      // Helper methods for AOS and SOA arrays, but it is totally 
+      // acceptable to fill in the layout constraint set manually
+      inline void attach_array_aos(void *base, bool column_major,
+                                   const std::vector<FieldID> &fields,
+                                   Memory mem, size_t alignment = 16);
+      inline void attach_array_soa(void *base, bool column_major,
+                                   const std::vector<FieldID> &fields,
+                                   Memory mem, size_t alignment = 16);
     public:
       ExternalResource                              resource;
       LogicalRegion                                 handle;
@@ -1893,9 +1917,9 @@ namespace Legion {
       std::vector<FieldID>                          file_fields; // normal files
       std::map<FieldID,/*file name*/const char*>    field_files; // hdf5 files
     public:
-      // Data for arrays
-      std::map<FieldID,/*pointers*/void*>           field_pointers;
-      std::vector<size_t/*bytes*/>                  pitches;
+      // Data for external instances
+      LayoutConstraintSet                           constraints;
+      std::set<FieldID>                             privilege_fields;
     public:
       // Inform the runtime about any static dependences
       // These will be ignored outside of static traces
@@ -2557,7 +2581,7 @@ namespace Legion {
       bool                                speculated;
     public:
       // Parent task (only guaranteed to be good for one recursion)
-      Task*                               parent_task;
+      const Task*                         parent_task;
     };
 
     /**
@@ -2594,7 +2618,7 @@ namespace Legion {
       DomainPoint                       index_point;
     public:
       // Parent task for the copy operation
-      Task*                             parent_task;
+      const Task*                       parent_task;
     };
 
     /**
@@ -2626,7 +2650,7 @@ namespace Legion {
       LayoutConstraintID                layout_constraint_id; 
     public:
       // Parent task for the inline operation
-      Task*                             parent_task;
+      const Task*                       parent_task;
     };
 
     /**
@@ -2659,7 +2683,7 @@ namespace Legion {
       std::vector<PhaseBarrier>         arrive_barriers;
     public:
       // Parent task for the acquire operation
-      Task*                             parent_task;
+      const Task*                       parent_task;
     };
 
     /**
@@ -2692,7 +2716,7 @@ namespace Legion {
       std::vector<PhaseBarrier>         arrive_barriers;
     public:
       // Parent task for the release operation
-      Task*                             parent_task;
+      const Task*                       parent_task;
     };
 
     /**
@@ -2724,7 +2748,7 @@ namespace Legion {
       RegionRequirement                 requirement;
     public:
       // Parent task for the inline operation
-      Task*                             parent_task;
+      const Task*                       parent_task;
     };
 
     /**
@@ -2761,7 +2785,7 @@ namespace Legion {
       DomainPoint                       index_point;
     public:
       // Parent task for the fill operation
-      Task*                           parent_task;
+      const Task*                       parent_task;
     };
 
     /**
@@ -2806,7 +2830,7 @@ namespace Legion {
       DomainPoint                         index_point;
     public:
       // Parent task for the partition operation
-      Task*                               parent_task;
+      const Task*                         parent_task;
     };
 
     //==========================================================================
@@ -6980,9 +7004,10 @@ namespace Legion {
 
 }; // namespace Legion
 
-#include "legion.inl"
+#include "legion/legion.inl"
 
 #endif // __LEGION_RUNTIME_H__
+#endif // defined LEGION_ENABLE_CXX_BINDINGS
 
 // EOF
 

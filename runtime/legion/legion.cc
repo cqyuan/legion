@@ -15,12 +15,12 @@
 
 
 #include "legion.h"
-#include "runtime.h"
-#include "legion_ops.h"
-#include "legion_tasks.h"
-#include "legion_context.h"
-#include "legion_profiling.h"
-#include "legion_allocation.h"
+#include "legion/runtime.h"
+#include "legion/legion_ops.h"
+#include "legion/legion_tasks.h"
+#include "legion/legion_context.h"
+#include "legion/legion_profiling.h"
+#include "legion/legion_allocation.h"
 
 namespace Legion {
 #ifndef DISABLE_PARTITION_SHIM
@@ -4590,6 +4590,14 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    IndexSpace Runtime::get_index_subspace_internal(IndexPartition p,
+                                      const void *realm_color, TypeTag type_tag)
+    //--------------------------------------------------------------------------
+    {
+      return runtime->get_index_subspace(p, realm_color, type_tag);
+    }
+
+    //--------------------------------------------------------------------------
     bool Runtime::has_index_subspace(Context ctx, 
                                      IndexPartition p, const DomainPoint &color)
     //--------------------------------------------------------------------------
@@ -4642,6 +4650,14 @@ namespace Legion {
           assert(false);
       }
       return false;
+    }
+
+    //--------------------------------------------------------------------------
+    bool Runtime::has_index_subspace_internal(IndexPartition p,
+                                      const void *realm_color, TypeTag type_tag)
+    //--------------------------------------------------------------------------
+    {
+      return runtime->has_index_subspace(p, realm_color, type_tag);
     }
 
     //--------------------------------------------------------------------------
@@ -5821,7 +5837,7 @@ namespace Legion {
     {
       runtime->detach_external_resource(ctx, region);
     }
-
+    
     //--------------------------------------------------------------------------
     void Runtime::issue_copy_operation(Context ctx,const CopyLauncher &launcher)
     //--------------------------------------------------------------------------

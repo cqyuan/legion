@@ -607,7 +607,8 @@ class Channel(object):
         for point in self.time_points:
             if point.first:
                 if len(free_levels) > 0:
-                    point.thing.level = free_levels.pop()
+                    point.thing.level = min(free_levels)
+                    free_levels.remove(point.thing.level)
                 else:
                     point.thing.level = self.max_live_copies + 1
                     self.max_live_copies += 1
@@ -1716,9 +1717,9 @@ class State(object):
             #"UserInfo": self.log_user_info
         }
 
-    def log_task_info(self, op_id, variant_id, proc_id,
+    def log_task_info(self, op_id, task_id, variant_id, proc_id,
                       create, ready, start, stop):
-        variant = self.find_variant(variant_id)
+        variant = self.find_variant(task_id, variant_id)
         task = self.find_task(op_id, variant, create, ready, start, stop)
         if stop > self.last_time:
             self.last_time = stop
@@ -1796,8 +1797,8 @@ class State(object):
             self.last_time = stop 
         proc.add_task(user)
 
-    def log_task_wait_info(self, op_id, variant_id, wait_start, wait_ready, wait_end):
-        variant = self.find_variant(variant_id)
+    def log_task_wait_info(self, op_id, task_id, variant_id, wait_start, wait_ready, wait_end):
+        variant = self.find_variant(task_id, variant_id)
         task = self.find_task(op_id, variant)
         assert wait_ready >= wait_start
         assert wait_end >= wait_ready
@@ -1820,11 +1821,12 @@ class State(object):
     def log_variant(self, task_id, variant_id, name):
         assert task_id in self.task_kinds
         task_kind = self.task_kinds[task_id]
-        if variant_id not in self.variants:
-            self.variants[variant_id] = Variant(variant_id, name)
+        key = (task_id, variant_id)
+        if key not in self.variants:
+            self.variants[key] = Variant(variant_id, name)
         else:
-            self.variants[variant_id].name = name
-        self.variants[variant_id].set_task_kind(task_kind)
+            self.variants[key].name = name
+        self.variants[key].set_task_kind(task_kind)
 
     def log_operation(self, op_id, kind):
         op = self.find_op(op_id)
@@ -1953,10 +1955,11 @@ class State(object):
                 self.channels[None] = Channel(None,None)
             return self.channels[None]
 
-    def find_variant(self, variant_id):
-        if variant_id not in self.variants:
-            self.variants[variant_id] = Variant(variant_id, None)
-        return self.variants[variant_id]
+    def find_variant(self, task_id, variant_id):
+        key = (task_id, variant_id)
+        if key not in self.variants:
+            self.variants[key] = Variant(variant_id, None)
+        return self.variants[key]
 
     def find_meta_variant(self, lg_id):
         if lg_id not in self.meta_variants:

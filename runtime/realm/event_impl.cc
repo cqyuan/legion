@@ -13,13 +13,13 @@
  * limitations under the License.
  */
 
-#include "event_impl.h"
+#include "realm/event_impl.h"
 
-#include "proc_impl.h"
-#include "runtime_impl.h"
-#include "logging.h"
-#include "threads.h"
-#include "profiling.h"
+#include "realm/proc_impl.h"
+#include "realm/runtime_impl.h"
+#include "realm/logging.h"
+#include "realm/threads.h"
+#include "realm/profiling.h"
 
 namespace Realm {
 
@@ -178,6 +178,9 @@ namespace Realm {
 
     protected:
       const EventTriggeredCondition& cond;
+#ifdef REALM_EVENT_WAITER_BACKTRACE
+      mutable Backtrace backtrace;
+#endif
     };
 
     void add_callback(Callback& cb) const;
@@ -201,6 +204,9 @@ namespace Realm {
   EventTriggeredCondition::Callback::Callback(const EventTriggeredCondition& _cond)
     : cond(_cond)
   {
+#ifdef REALM_EVENT_WAITER_BACKTRACE
+    backtrace.capture_backtrace();
+#endif
   }
   
   EventTriggeredCondition::Callback::~Callback(void)
@@ -218,7 +224,12 @@ namespace Realm {
 
   void EventTriggeredCondition::Callback::print(std::ostream& os) const
   {
+#ifdef REALM_EVENT_WAITER_BACKTRACE
+    backtrace.lookup_symbols();
+    os << "EventTriggeredCondition (backtrace=" << backtrace << ")";
+#else
     os << "EventTriggeredCondition (thread unknown)";
+#endif
   }  
 
   Event EventTriggeredCondition::Callback::get_finish_event(void) const
@@ -319,6 +330,11 @@ namespace Realm {
   void Event::cancel_operation(const void *reason_data, size_t reason_len) const
   {
     get_runtime()->optable.request_cancellation(*this, reason_data, reason_len);
+  }
+
+  void Event::set_operation_priority(int new_priority) const
+  {
+    get_runtime()->optable.set_priority(*this, new_priority);
   }
 
 
@@ -1560,7 +1576,9 @@ namespace Realm {
 	  generation = gen_triggered;
 
 	  // we'll free the event unless it's maxed out on poisoned generations
-	  free_event = (num_poisoned_generations < POISONED_GENERATION_LIMIT);
+	  //  or generation count
+	  free_event = ((num_poisoned_generations < POISONED_GENERATION_LIMIT) &&
+			(generation < ((1U << ID::EVENT_GENERATION_WIDTH) - 1)));
 	}
 
 	// any remote nodes to notify?
@@ -1723,6 +1741,14 @@ namespace Realm {
       initial_value = 0;
       value_capacity = 0;
       final_values = 0;
+    }
+
+    BarrierImpl::~BarrierImpl(void)
+    {
+      if(initial_value)
+	free(initial_value);
+      if(final_values)
+	free(final_values);
     }
 
     void BarrierImpl::init(ID _me, unsigned _init_owner)

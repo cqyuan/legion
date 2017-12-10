@@ -50,9 +50,6 @@ LEGION_LIBS     := -L. -llegion -lrealm
 
 # Handle some of the common machines we frequent
 
-# machine architecture (generally "native" unless cross-compiling)
-MARCH ?= native
-
 ifeq ($(shell uname -n),sapling)
 CONDUIT=ibv
 GPU_ARCH=fermi
@@ -89,13 +86,12 @@ endif
 ifeq ($(findstring titan,$(shell uname -n)),titan)
 # without this, lapack stuff will link, but generate garbage output - thanks Cray!
 LAPACK_LIBS=-L/opt/acml/5.3.1/gfortran64_fma4/lib -Wl,-rpath=/opt/acml/5.3.1/gfortran64_fma4/lib -lacml
-MARCH=bdver1
+MARCH ?= bdver1
 CUDA=${CUDATOOLKIT_HOME}
 CONDUIT=gemini
 GPU_ARCH=k20
 endif
 ifeq ($(findstring daint,$(shell uname -n)),daint)
-MARCH=corei7-avx
 CUDA=${CUDATOOLKIT_HOME}
 CONDUIT=aries
 GPU_ARCH=k20
@@ -118,11 +114,14 @@ LEGION_LD_FLAGS += ${CRAY_UDREG_POST_LINK_OPTS}
 LEGION_LD_FLAGS += ${CRAY_PMI_POST_LINK_OPTS}
 endif
 
+# machine architecture (generally "native" unless cross-compiling)
+MARCH ?= native
+
 ifneq (${MARCH},)
   CC_FLAGS += -march=${MARCH}
 endif
 
-INC_FLAGS	+= -I$(LG_RT_DIR) -I$(LG_RT_DIR)/realm -I$(LG_RT_DIR)/legion -I$(LG_RT_DIR)/mappers
+INC_FLAGS	+= -I$(LG_RT_DIR) -I$(LG_RT_DIR)/mappers
 ifneq ($(shell uname -s),Darwin)
 LEGION_LD_FLAGS	+= -lrt -lpthread
 else
@@ -218,6 +217,7 @@ ifeq ($(strip $(USE_PYTHON)),1)
       ifeq ($(PYTHON_EXE),)
         $(error cannot find python - set PYTHON_ROOT if not in PATH)
       endif
+      PYTHON_VERSION_MAJOR := $(shell $(PYTHON_EXE) -c 'import sys; print(sys.version_info.major)')
       PYTHON_ROOT := $(dir $(PYTHON_EXE))
     endif
 
@@ -245,7 +245,15 @@ ifeq ($(strip $(USE_PYTHON)),1)
       else
         CC_FLAGS += -DREALM_PYTHON_LIB="\"$(PYTHON_LIB)\""
       endif
+    else
+      CC_FLAGS += -DREALM_PYTHON_LIB="\"$(PYTHON_LIB)\""
     endif
+  endif
+
+  ifndef PYTHON_VERSION_MAJOR
+    $(error cannot auto-detect Python version - please set PYTHON_VERSION_MAJOR)
+  else
+    CC_FLAGS += -DREALM_PYTHON_VERSION_MAJOR=$(PYTHON_VERSION_MAJOR)
   endif
 
   CC_FLAGS += -DREALM_USE_PYTHON
@@ -562,9 +570,13 @@ GEN_GPU_OBJS	:=
 GPU_RUNTIME_OBJS:=
 endif
 
+# Provide build rules unless the user asks us not to
 ifndef NO_BUILD_RULES
+# Provide an all unless the user asks us not to
+ifndef NO_BUILD_ALL
 .PHONY: all
 all: $(OUTFILE)
+endif
 
 # If we're using CUDA we have to link with nvcc
 $(OUTFILE) : $(GEN_OBJS) $(GEN_GPU_OBJS) $(SLIB_LEGION) $(SLIB_REALM)

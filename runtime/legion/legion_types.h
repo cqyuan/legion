@@ -20,13 +20,12 @@
  * \file legion_types.h
  */
 
-#include <cstdio>
-#include <cstdlib>
-#include <cassert>
-#include <cstring>
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include <string.h>
 #include <stdint.h>
-
-#include "limits.h"
+#include <limits.h>
 
 #include <map>
 #include <set>
@@ -35,14 +34,14 @@
 #include <vector>
 #include <typeinfo>
 
-#include "legion_config.h"
-#include "legion_template_help.h"
+#include "legion/legion_config.h"
+#include "legion/legion_template_help.h"
 
 // Make sure we have the appropriate defines in place for including realm
 // SJT: too late to define this here...
 //define REALM_USE_LEGION_LAYOUT_CONSTRAINTS
 #include "realm.h"
-#include "dynamic_templates.h"
+#include "realm/dynamic_templates.h"
 
 // this may be set before including legion.h to eliminate deprecation warnings
 //  for just the Legion API
@@ -139,9 +138,9 @@ namespace Legion {
   struct SerdezRedopFns;
   // Some typedefs for making things nicer for users with C++11 support
 #if __cplusplus >= 201103L
-  template<typename FT, int N, typename T = ::legion_lowlevel_coord_t>
+  template<typename FT, int N, typename T = ::legion_coord_t>
   using GenericAccessor = Realm::GenericAccessor<FT,N,T>;
-  template<typename FT, int N, typename T = ::legion_lowlevel_coord_t>
+  template<typename FT, int N, typename T = ::legion_coord_t>
   using AffineAccessor = Realm::AffineAccessor<FT,N,T>;
 #endif
 
@@ -305,6 +304,7 @@ namespace Legion {
       LG_TRIGGER_COMPLETE_ID,
       LG_TRIGGER_OP_ID,
       LG_TRIGGER_TASK_ID,
+      LG_DEFER_MAPPER_SCHEDULER_TASK_ID,
       LG_DEFERRED_RECYCLE_ID,
       LG_MUST_INDIV_ID,
       LG_MUST_INDEX_ID,
@@ -338,6 +338,8 @@ namespace Legion {
       LG_FIELD_SEMANTIC_INFO_REQ_TASK_ID,
       LG_REGION_SEMANTIC_INFO_REQ_TASK_ID,
       LG_PARTITION_SEMANTIC_INFO_REQ_TASK_ID,
+      LG_INDEX_SPACE_DEFER_CHILD_TASK_ID,
+      LG_INDEX_PART_DEFER_CHILD_TASK_ID,
       LG_SELECT_TUNABLE_TASK_ID,
       LG_DEFERRED_ENQUEUE_OP_ID,
       LG_DEFERRED_ENQUEUE_TASK_ID,
@@ -364,7 +366,8 @@ namespace Legion {
       LG_DEFER_PHI_VIEW_REF_TASK_ID,
       LG_DEFER_PHI_VIEW_REGISTRATION_TASK_ID,
       LG_TIGHTEN_INDEX_SPACE_TASK_ID,
-      LG_PROF_OUTPUT_TASK_ID,
+      LG_REMOTE_PHYSICAL_REQUEST_TASK_ID,
+      LG_REMOTE_PHYSICAL_RESPONSE_TASK_ID,
       LG_MESSAGE_ID, // These two must be the last two
       LG_RETRY_SHUTDOWN_TASK_ID,
       LG_LAST_TASK_ID, // This one should always be last
@@ -403,6 +406,7 @@ namespace Legion {
         "Trigger Complete",                                       \
         "Operation Physical Dependence Analysis",                 \
         "Task Physical Dependence Analysis",                      \
+        "Defer Mapper Scheduler",                                 \
         "Deferred Recycle",                                       \
         "Must Individual Task Dependence Analysis",               \
         "Must Index Task Dependence Analysis",                    \
@@ -436,6 +440,8 @@ namespace Legion {
         "Field Semantic Request",                                 \
         "Region Semantic Request",                                \
         "Partition Semantic Request",                             \
+        "Defer Index Space Child Request",                        \
+        "Defer Index Partition Child Request",                    \
         "Select Tunable",                                         \
         "Deferred Enqueue Op",                                    \
         "Deferred Enqueue Task",                                  \
@@ -462,7 +468,8 @@ namespace Legion {
         "Defer Phi View Reference",                               \
         "Defer Phi View Registration",                            \
         "Tighten Index Space",                                    \
-        "Legion Prof Early Output",                               \
+        "Remote Physical Context Request",                        \
+        "Remote Physical Context Response",                       \
         "Remote Message",                                         \
         "Retry Shutdown",                                         \
       };
@@ -660,6 +667,8 @@ namespace Legion {
       DISTRIBUTED_VALID_UPDATE,
       DISTRIBUTED_GC_UPDATE,
       DISTRIBUTED_RESOURCE_UPDATE,
+      DISTRIBUTED_INVALIDATE,
+      DISTRIBUTED_DEACTIVATE,
       DISTRIBUTED_CREATE_ADD,
       DISTRIBUTED_CREATE_REMOVE,
       DISTRIBUTED_UNREGISTER,
@@ -791,6 +800,8 @@ namespace Legion {
         "Distributed Valid Update",                                   \
         "Distributed GC Update",                                      \
         "Distributed Resource Update",                                \
+        "Distributed Invalidate",                                     \
+        "Distributed Deactivate",                                     \
         "Distributed Create Add",                                     \
         "Distributed Create Remove",                                  \
         "Distributed Unregister",                                     \
@@ -982,8 +993,8 @@ namespace Legion {
       REGION_TREE_PHYSICAL_REDUCE_ACROSS_CALL,
       REGION_TREE_PHYSICAL_CONVERT_MAPPING_CALL,
       REGION_TREE_PHYSICAL_FILL_FIELDS_CALL,
-      REGION_TREE_PHYSICAL_ATTACH_FILE_CALL,
-      REGION_TREE_PHYSICAL_DETACH_FILE_CALL,
+      REGION_TREE_PHYSICAL_ATTACH_EXTERNAL_CALL,
+      REGION_TREE_PHYSICAL_DETACH_EXTERNAL_CALL,
       REGION_NODE_REGISTER_LOGICAL_USER_CALL,
       REGION_NODE_CLOSE_LOGICAL_NODE_CALL,
       REGION_NODE_SIPHON_LOGICAL_CHILDREN_CALL,
@@ -1140,8 +1151,8 @@ namespace Legion {
       "Region Tree Physical Reduce Across",                           \
       "Region Tree Physical Convert Mapping",                         \
       "Region Tree Physical Fill Fields",                             \
-      "Region Tree Physical Attach File",                             \
-      "Region Tree Physical Detach File",                             \
+      "Region Tree Physical Attach External",                         \
+      "Region Tree Physical Detach External",                         \
       "Region Node Register Logical User",                            \
       "Region Node Close Logical Node",                               \
       "Region Node Siphon Logical Children",                          \
@@ -1525,7 +1536,7 @@ namespace Legion {
   typedef Realm::Machine::MemoryMemoryAffinity MemoryMemoryAffinity;
   typedef Realm::DynamicTemplates::TagType TypeTag;
   typedef Realm::Logger Logger;
-  typedef ::legion_lowlevel_coord_t coord_t;
+  typedef ::legion_coord_t coord_t;
   typedef std::map<CustomSerdezID, 
                    const Realm::CustomSerdezUntyped *> SerdezOpTable;
   typedef std::map<Realm::ReductionOpID, 
@@ -1920,7 +1931,7 @@ namespace Legion {
 
 // now that we have things like LgEvent defined, we can include accessor.h to
 // pick up ptr_t, which is used for compatibility-mode Coloring and friends
-#include "accessor.h"
+#include "legion/accessor.h"
 
 namespace Legion {
   typedef LegionRuntime::Accessor::ByteOffset ByteOffset;

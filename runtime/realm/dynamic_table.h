@@ -30,6 +30,8 @@ namespace Realm {
       int level;
       IT first_index, last_index;
       LT lock;
+      // all nodes in a table are linked in a list for destruction
+      DynamicTableNodeBase<LT,IT> *next_alloced_node;
     };
 
     template <typename ET, size_t _SIZE, typename LT, typename IT>
@@ -67,6 +69,8 @@ namespace Realm {
       // lock protects _changes_ to 'root', but not access to it
       LT lock;
       NodeBase * volatile root;
+      // all nodes in a table are linked in a list for destruction
+      NodeBase *first_alloced_node;
     };
 
     template <typename ALLOCATOR>
@@ -94,7 +98,7 @@ namespace Realm {
 	
 }; // namespace Realm
 
-#include "dynamic_table.inl"
+#include "realm/dynamic_table.inl"
 
 #endif // ifndef REALM_DYNAMIC_TABLE_H
 

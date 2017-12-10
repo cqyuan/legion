@@ -12,16 +12,25 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
--- fails-with:
--- type_mismatch_partition_by_field4.rg:25: type mismatch in argument 1: expected region of ispace(ptr) but got region(ispace(int1d), int32)
--- var p = partition(r, c)
---                   ^
+-- This file is not meant to be run directly.
+
+-- runs-with:
+-- []
 
 import "regent"
 
-task f()
-  var r = region(ispace(int1d, 5), int)
-  var c = ispace(ptr, 3)
-  var p = partition(r, c)
+local root_dir = arg[0]:match(".*/") or "./"
+local c = terralib.includec("embed.h", {"-I", root_dir})
+
+local fs = c.fs -- Get the field space from C header
+
+task my_regent_task(r : region(ispace(int1d), fs), x : int)
+where reads writes(r.{x, y}), reads(r.z) do
+  regentlib.c.printf("Hello from Regent! (value %d)\n", x)
 end
-f:compile()
+
+-- Save tasks to libembed_tasks.so
+local embed_tasks_h = root_dir .. "embed_tasks.h"
+local embed_tasks_so = root_dir .. "libembed_tasks.so"
+regentlib.save_tasks(embed_tasks_h, embed_tasks_so)
+return "embed_tasks"

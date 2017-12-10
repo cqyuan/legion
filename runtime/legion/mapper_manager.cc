@@ -14,11 +14,11 @@
  */
 
 #include "legion.h"
-#include "legion_ops.h"
-#include "legion_tasks.h"
-#include "mapper_manager.h"
-#include "legion_instances.h"
-#include "garbage_collection.h"
+#include "legion/legion_ops.h"
+#include "legion/legion_tasks.h"
+#include "legion/mapper_manager.h"
+#include "legion/legion_instances.h"
+#include "legion/garbage_collection.h"
 
 namespace Legion {
   namespace Internal {
@@ -47,7 +47,7 @@ namespace Legion {
     MapperManager::MapperManager(Runtime *rt, Mapping::Mapper *mp, 
                                  MapperID mid, Processor p)
       : runtime(rt), mapper(mp), mapper_id(mid), processor(p),
-        mapper_lock(Reservation::create_reservation()), next_mapper_event(1)
+        mapper_lock(Reservation::create_reservation())
     //--------------------------------------------------------------------------
     {
     }
@@ -60,6 +60,13 @@ namespace Legion {
       delete mapper;
       mapper_lock.destroy_reservation();
       mapper_lock = Reservation::NO_RESERVATION;
+      // Free all the available MappingCallInfo's we were keeping around
+      for (std::vector<MappingCallInfo*>::iterator
+	     it = available_infos.begin(); it != available_infos.end(); it++)
+      {
+	delete *it;
+      }
+      available_infos.clear();
     }
 
     //--------------------------------------------------------------------------
@@ -1319,12 +1326,7 @@ namespace Legion {
     {
       pause_mapper_call(ctx);
       MapperEvent result;
-      RtUserEvent event = Runtime::create_rt_user_event();
-      {
-        AutoLock m_lock(mapper_lock);
-        result.mapper_event_id = next_mapper_event++;
-        mapper_events[result.mapper_event_id] = event;
-      }
+      result.impl = Runtime::create_rt_user_event();
       resume_mapper_call(ctx);
       return result;
     }
@@ -1335,17 +1337,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       pause_mapper_call(ctx);
-      bool triggered = true;
-      RtEvent wait_on;
-      {
-        AutoLock m_lock(mapper_lock, 1, false/*exclusive*/); 
-        std::map<unsigned,RtUserEvent>::const_iterator finder = 
-          mapper_events.find(event.mapper_event_id);
-        if (finder != mapper_events.end())
-          wait_on = finder->second;
-      }
-      if (wait_on.exists())
-        triggered = wait_on.has_triggered();
+      const bool triggered = event.impl.has_triggered();
       resume_mapper_call(ctx);
       return triggered;
     }
@@ -1356,17 +1348,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       pause_mapper_call(ctx);
-      RtUserEvent to_trigger;
-      {
-        AutoLock m_lock(mapper_lock);
-        std::map<unsigned,RtUserEvent>::iterator finder = 
-          mapper_events.find(event.mapper_event_id);
-        if (finder != mapper_events.end())
-        {
-          to_trigger = finder->second;
-          mapper_events.erase(finder);
-        }
-      }
+      RtUserEvent to_trigger = event.impl;
       if (to_trigger.exists())
         Runtime::trigger_event(to_trigger);
       resume_mapper_call(ctx);
@@ -1378,14 +1360,7 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       pause_mapper_call(ctx);
-      RtEvent wait_on;
-      {
-        AutoLock m_lock(mapper_lock);
-        std::map<unsigned,RtUserEvent>::iterator finder = 
-          mapper_events.find(event.mapper_event_id);
-        if (finder != mapper_events.end())
-          wait_on = finder->second;
-      }
+      RtEvent wait_on = event.impl;
       if (wait_on.exists())
         wait_on.lg_wait();
       resume_mapper_call(ctx);

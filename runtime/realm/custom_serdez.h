@@ -18,9 +18,7 @@
 #ifndef REALM_CUSTOM_SERDEZ_H
 #define REALM_CUSTOM_SERDEZ_H
 
-#include "lowlevel_config.h"
-
-#include "serialize.h"
+#include "realm/serialize.h"
 
 #include <sys/types.h>
 
@@ -149,6 +147,8 @@ namespace Realm {
 
     virtual ~CustomSerdezUntyped(void);
 
+    virtual CustomSerdezUntyped *clone(void) const = 0;
+
     // each operator exists in two forms: single-element and strided-array-of-elements
 
     // computes the number of bytes needed for the serialization of 'val'
@@ -179,7 +179,7 @@ namespace Realm {
 
 }; // namespace Realm
 
-#include "custom_serdez.inl"
+#include "realm/custom_serdez.inl"
 
 #endif // ifndef REALM_REDOP_H
 

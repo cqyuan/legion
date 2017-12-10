@@ -14,15 +14,15 @@
  */
 
 #include "legion.h"
-#include "runtime.h"
-#include "legion_ops.h"
-#include "legion_tasks.h"
-#include "region_tree.h"
-#include "legion_spy.h"
-#include "legion_context.h"
-#include "legion_profiling.h"
-#include "legion_instances.h"
-#include "legion_views.h"
+#include "legion/runtime.h"
+#include "legion/legion_ops.h"
+#include "legion/legion_tasks.h"
+#include "legion/region_tree.h"
+#include "legion/legion_spy.h"
+#include "legion/legion_context.h"
+#include "legion/legion_profiling.h"
+#include "legion/legion_instances.h"
+#include "legion/legion_views.h"
 
 namespace Legion {
   namespace Internal {
@@ -142,6 +142,8 @@ namespace Legion {
       : allocated_fields(mask), constraints(con), owner(NULL), total_dims(0)
     //--------------------------------------------------------------------------
     {
+      constraints->add_reference();
+      layout_lock = Reservation::NO_RESERVATION;
     }
 
     //--------------------------------------------------------------------------
@@ -159,8 +161,11 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       comp_cache.clear();
-      layout_lock.destroy_reservation();
-      layout_lock = Reservation::NO_RESERVATION;
+      if (layout_lock.exists())
+      {
+        layout_lock.destroy_reservation();
+        layout_lock = Reservation::NO_RESERVATION;
+      }
       if (constraints->remove_reference())
         delete (constraints);
     }
@@ -497,8 +502,6 @@ namespace Legion {
     PhysicalManager::~PhysicalManager(void)
     //--------------------------------------------------------------------------
     {
-      if (is_owner() && registered_with_runtime)
-        unregister_with_runtime(MANAGER_VIRTUAL_CHANNEL);
       if (region_node != NULL)
       {
         region_node->unregister_physical_manager(this);
@@ -947,8 +950,10 @@ namespace Legion {
                                      RegionNode *node, LayoutDescription *desc, 
                                      const PointerConstraint &constraint,
                                      bool register_now, ApEvent u_event,
+                                     bool external_instance,
                                      Reservation read_only_reservation) 
-      : PhysicalManager(ctx, mem, desc, constraint, encode_instance_did(did), 
+      : PhysicalManager(ctx, mem, desc, constraint, 
+                        encode_instance_did(did, external_instance), 
                         owner_space, node, inst, instance_domain, 
                         own, register_now),use_event(u_event),
                         read_only_mapping_reservation(read_only_reservation)
@@ -1200,6 +1205,7 @@ namespace Legion {
       MemoryManager *memory = runtime->find_memory_manager(mem);
       void *location;
       InstanceManager *man = NULL;
+      const bool external_instance = PhysicalManager::is_external_did(did);
       if (runtime->find_pending_collectable_location(did, location))
         man = new(location) InstanceManager(runtime->forest,did,
                                             owner_space, memory, inst, 
@@ -1207,22 +1213,17 @@ namespace Legion {
                                             target_node, layout,
                                             pointer_constraint,
                                             false/*reg now*/, use_event,
+                                            external_instance, 
                                             read_only_reservation);
       else
         man = new InstanceManager(runtime->forest, did, owner_space,
                                   memory, inst, inst_domain, false/*owns*/,
                                   target_node, layout, pointer_constraint, 
                                   false/*reg now*/, use_event,
+                                  external_instance,
                                   read_only_reservation);
       // Hold-off doing the registration until construction is complete
       man->register_with_runtime(NULL/*no remote registration needed*/);
-    }
-
-    //--------------------------------------------------------------------------
-    bool InstanceManager::is_attached_file(void) const
-    //--------------------------------------------------------------------------
-    {
-      return layout->constraints->specialized_constraint.is_file();
     }
 
     /////////////////////////////////////////////////////////////
@@ -1831,8 +1832,6 @@ namespace Legion {
     VirtualManager::~VirtualManager(void)
     //--------------------------------------------------------------------------
     {
-      // this should never be deleted since it is a singleton
-      assert(false);
     }
 
     //--------------------------------------------------------------------------
@@ -1914,6 +1913,15 @@ namespace Legion {
       singleton = new VirtualManager(rt->forest, layout,pointer_constraint,did);
       // put a permenant resource reference on this so it is never deleted
       singleton->add_base_resource_ref(NEVER_GC_REF);
+    }
+
+    //--------------------------------------------------------------------------
+    /*static*/ void VirtualManager::finalize_virtual_instance(void)
+    //--------------------------------------------------------------------------
+    {
+      VirtualManager *&singleton = get_singleton();
+      if (singleton->remove_base_resource_ref(NEVER_GC_REF))
+        delete singleton;
     }
 
     /////////////////////////////////////////////////////////////
@@ -2049,6 +2057,7 @@ namespace Legion {
                                          own_domain, ancestor, layout, 
                                          pointer_constraint, 
                                          true/*register now*/, ready,
+                                         false/*external instance*/,
                                          read_only_reservation);
             break;
           }
@@ -2437,9 +2446,27 @@ namespace Legion {
       }
       // Compute the field groups for realm 
       Realm::InstanceLayoutConstraints realm_constraints;
+      convert_layout_constraints(constraints, field_set, 
+                                 field_sizes, realm_constraints); 
+      // Create the layout
+#ifdef DEBUG_LEGION
+      assert(realm_layout == NULL);
+#endif
+      realm_layout = instance_domain->create_layout(realm_constraints, ord);
+    }
+
+    //--------------------------------------------------------------------------
+    /*static*/ void InstanceBuilder::convert_layout_constraints(
+                    const LayoutConstraintSet &constraints,
+                    const std::vector<FieldID> &field_set,
+                    const std::vector<size_t> &field_sizes,
+                            Realm::InstanceLayoutConstraints &realm_constraints)
+    //--------------------------------------------------------------------------
+    {
+      const OrderingConstraint &ord = constraints.ordering_constraint;
       if (ord.ordering.front() == DIM_F)
       {
-        // AOS - all field groups in same group
+        // AOS - all field in same group
         realm_constraints.field_groups.resize(1);
         realm_constraints.field_groups[0].resize(field_set.size());
         for (unsigned idx = 0; idx < field_set.size(); idx++)
@@ -2467,15 +2494,10 @@ namespace Legion {
       }
       else // Have to be AOS or SOA for now
         assert(false);
-      // Next go through and check for any offset constraints for fields
+      // TODO: Next go through and check for any offset constraints for fields
 
-      // Then update the alignments per the alignment constraints
+      // TODO: Then update the alignments per the alignment constraints
 
-      // Create the layout
-#ifdef DEBUG_LEGION
-      assert(realm_layout == NULL);
-#endif
-      realm_layout = instance_domain->create_layout(realm_constraints);
     }
     
   }; // namespace Internal

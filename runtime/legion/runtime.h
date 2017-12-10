@@ -18,13 +18,13 @@
 #define __RUNTIME_H__
 
 #include "legion.h"
-#include "legion_spy.h"
-#include "region_tree.h"
-#include "mapper_manager.h"
-#include "legion_utilities.h"
-#include "legion_profiling.h"
-#include "legion_allocation.h"
-#include "garbage_collection.h"
+#include "legion/legion_spy.h"
+#include "legion/region_tree.h"
+#include "legion/mapper_manager.h"
+#include "legion/legion_utilities.h"
+#include "legion/legion_profiling.h"
+#include "legion/legion_allocation.h"
+#include "legion/garbage_collection.h"
 
 #define REPORT_LEGION_FATAL(code, fmt, ...)               \
 {                                                         \
@@ -363,6 +363,7 @@ namespace Legion {
                             bool warn = false, const char *src = NULL);
       bool is_valid(void) const;
       bool is_mapped(void) const;
+      bool is_external_region(void) const;
       LogicalRegion get_logical_region(void) const;
       LegionRuntime::Accessor::RegionAccessor<
         LegionRuntime::Accessor::AccessorType::Generic>
@@ -569,6 +570,15 @@ namespace Legion {
       public:
         TaskOp *op;
       };
+      struct DeferMapperSchedulerArgs : 
+        public LgTaskArgs<DeferMapperSchedulerArgs> {
+      public:
+        static const LgTaskID TASK_ID = LG_DEFER_MAPPER_SCHEDULER_TASK_ID;
+      public:
+        ProcessorManager *proxy_this;
+        MapperID map_id;
+        RtEvent deferral_event;
+      };
       struct MapperMessage {
       public:
         MapperMessage(void)
@@ -602,6 +612,8 @@ namespace Legion {
     public:
       void perform_scheduling(void);
       void launch_task_scheduler(void);
+      void notify_deferred_mapper(MapperID map_id, RtEvent deferred_event);
+      static void handle_defer_mapper(const void *args);
     public:
       void activate_context(InnerContext *context);
       void deactivate_context(InnerContext *context);
@@ -622,6 +634,9 @@ namespace Legion {
     protected:
       void increment_active_contexts(void);
       void decrement_active_contexts(void);
+    protected:
+      void increment_active_mappers(void);
+      void decrement_active_mappers(void);
     public:
       // Immutable state
       Runtime *const runtime;
@@ -640,20 +655,28 @@ namespace Legion {
       Reservation queue_lock;
       bool task_scheduler_enabled;
       unsigned total_active_contexts;
+      unsigned total_active_mappers;
       struct ContextState {
       public:
         ContextState(void)
-          : active(false), owned_tasks(0) { }
+          : owned_tasks(0), active(false) { }
       public:
-        bool active;
         unsigned owned_tasks;
+        bool active;
       };
       std::vector<ContextState> context_states;
     protected:
-      // For each mapper, a list of tasks that are ready to map
-      std::map<MapperID,std::list<TaskOp*> > ready_queues;
       // Mapper objects
       std::map<MapperID,std::pair<MapperManager*,bool/*own*/> > mappers;
+      // For each mapper something to track its state
+      struct MapperState {
+      public:
+        std::list<TaskOp*> ready_queue;
+        RtEvent deferral_event;
+        bool added_tasks;
+      };
+      // State for each mapper for scheduling purposes
+      std::map<MapperID,MapperState> mapper_states;
       // Reservations for accessing mappers
       Reservation mapper_lock;
       // The set of visible memories from this processor
@@ -2055,6 +2078,8 @@ namespace Legion {
       void send_did_remote_gc_update(AddressSpaceID target, Serializer &rez);
       void send_did_remote_resource_update(AddressSpaceID target,
                                            Serializer &rez);
+      void send_did_remote_invalidate(AddressSpaceID target, Serializer &rez);
+      void send_did_remote_deactivate(AddressSpaceID target, Serializer &rez);
       void send_did_add_create_reference(AddressSpaceID target,Serializer &rez);
       void send_did_remove_create_reference(AddressSpaceID target,
                                             Serializer &rez, bool flush = true);
@@ -2223,6 +2248,8 @@ namespace Legion {
       void handle_did_remote_valid_update(Deserializer &derez);
       void handle_did_remote_gc_update(Deserializer &derez);
       void handle_did_remote_resource_update(Deserializer &derez);
+      void handle_did_remote_invalidate(Deserializer &derez);
+      void handle_did_remote_deactivate(Deserializer &derez);
       void handle_did_create_add(Deserializer &derez);
       void handle_did_create_remove(Deserializer &derez);
       void handle_did_remote_unregister(Deserializer &derez);
@@ -2411,6 +2438,8 @@ namespace Legion {
       void unregister_distributed_collectable(DistributedID did);
       bool has_distributed_collectable(DistributedID did);
       DistributedCollectable* find_distributed_collectable(DistributedID did);
+      DistributedCollectable* find_distributed_collectable(DistributedID did,
+                                                           RtEvent &ready);
       DistributedCollectable* weak_find_distributed_collectable(
                                                            DistributedID did);
       bool find_pending_collectable_location(DistributedID did,void *&location);

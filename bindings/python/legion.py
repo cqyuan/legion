@@ -15,10 +15,13 @@
 # limitations under the License.
 #
 
-from __future__ import print_function
+from __future__ import absolute_import, division, print_function, unicode_literals
 
 import cffi
-import cPickle
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
 import collections
 import itertools
 import numpy
@@ -28,13 +31,58 @@ import subprocess
 import sys
 import threading
 
-_pickle_version = cPickle.HIGHEST_PROTOCOL # Use latest Pickle protocol
+# Python 3.x compatibility:
+try:
+    long # Python 2
+except NameError:
+    long = int  # Python 3
 
-root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-runtime_dir = os.path.join(root_dir, 'runtime')
-legion_dir = os.path.join(runtime_dir, 'legion')
+try:
+    xrange # Python 2
+except NameError:
+    xrange = range # Python 3
 
-header = subprocess.check_output(['gcc', '-I', runtime_dir, '-I', legion_dir, '-E', '-P', os.path.join(legion_dir, 'legion_c.h')])
+try:
+    zip_longest = itertools.izip_longest # Python 2
+except:
+    zip_longest = itertools.zip_longest # Python 3
+
+_pickle_version = pickle.HIGHEST_PROTOCOL # Use latest Pickle protocol
+
+def find_legion_header():
+    def try_prefix(prefix_dir):
+        legion_h_path = os.path.join(prefix_dir, 'legion.h')
+        if os.path.exists(legion_h_path):
+            return prefix_dir, legion_h_path
+
+    # For in-source builds, find the header relative to the bindings
+    root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+    runtime_dir = os.path.join(root_dir, 'runtime')
+    result = try_prefix(runtime_dir)
+    if result:
+        return result
+
+    # If this was installed to a non-standard prefix, we might be able
+    # to guess from the directory structures
+    if os.path.basename(root_dir) == 'lib':
+        include_dir = os.path.join(os.path.dirname(root_dir), 'include')
+        result = try_prefix(include_dir)
+        if result:
+            return result
+
+    # Otherwise we have to hope that Legion is installed in a standard location
+    result = try_prefix('/usr/include')
+    if result:
+        return result
+
+    result = try_prefix('/usr/local/include')
+    if result:
+        return result
+
+    raise Exception('Unable to locate legion.h header file')
+
+prefix_dir, legion_h_path = find_legion_header()
+header = subprocess.check_output(['gcc', '-I', prefix_dir, '-E', '-P', legion_h_path]).decode('utf-8')
 
 # Hack: Fix for Ubuntu 16.04 versions of standard library headers:
 header = re.sub(r'typedef struct {.+?} max_align_t;', '', header, flags=re.DOTALL)
@@ -42,6 +90,17 @@ header = re.sub(r'typedef struct {.+?} max_align_t;', '', header, flags=re.DOTAL
 ffi = cffi.FFI()
 ffi.cdef(header)
 c = ffi.dlopen(None)
+
+# Returns true if this module is running inside of a Legion
+# executable. If false, then other Legion functionality should not be
+# expected to work.
+def inside_legion_executable():
+    try:
+        c.legion_get_current_time_in_micros()
+    except AttributeError:
+        return False
+    else:
+        return True
 
 # The Legion context is stored in thread-local storage. This assumes
 # that the Python processor maintains the invariant that every task
@@ -108,7 +167,7 @@ class Future(object):
             value_size = c.legion_future_get_untyped_size(self.handle)
             assert value_size > 0
             value_str = ffi.unpack(ffi.cast('char *', value_ptr), value_size)
-            value = cPickle.loads(value_str)
+            value = pickle.loads(value_str)
             return value
         else:
             expected_size = ffi.sizeof(self.value_type)
@@ -252,7 +311,7 @@ class Fspace(object):
             field_id = c.legion_field_allocator_allocate_field(
                 alloc, field_type.size, field_id)
             c.legion_field_id_attach_name(
-                _my.ctx.runtime, handle, field_id, field_name, False)
+                _my.ctx.runtime, handle, field_id, field_name.encode('utf-8'), False)
             field_ids[field_name] = field_id
             field_types[field_name] = field_type
         c.legion_field_allocator_destroy(alloc)
@@ -507,7 +566,7 @@ class Task (object):
             arg_size = c.legion_task_get_arglen(task[0])
 
         if arg_size > 0:
-            args = cPickle.loads(ffi.unpack(arg_ptr, arg_size))
+            args = pickle.loads(ffi.unpack(arg_ptr, arg_size))
         else:
             args = ()
 
@@ -553,7 +612,7 @@ class Task (object):
 
         # Encode result in Pickle format.
         if result is not None:
-            result_str = cPickle.dumps(result, protocol=_pickle_version)
+            result_str = pickle.dumps(result, protocol=_pickle_version)
             result_size = len(result_str)
             result_ptr = ffi.new('char[]', result_size)
             ffi.buffer(result_ptr, result_size)[:] = result_str
@@ -582,14 +641,16 @@ class Task (object):
         options[0].inner = self.inner
         options[0].idempotent = self.idempotent
 
+        task_name = ('%s.%s' % (self.body.__module__, self.body.__name__))
+
         task_id = c.legion_runtime_preregister_task_variant_python_source(
             ffi.cast('legion_task_id_t', -1), # AUTO_GENERATE_ID
-            '%s.%s' % (self.body.__module__, self.body.__name__),
+            task_name.encode('utf-8'),
             execution_constraints,
             layout_constraints,
             options[0],
-            self.body.__module__,
-            self.body.__name__,
+            self.body.__module__.encode('utf-8'),
+            self.body.__name__.encode('utf-8'),
             ffi.NULL,
             0)
 
@@ -622,7 +683,7 @@ class _TaskLauncher(object):
         task_args = ffi.new('legion_task_argument_t *')
         task_args_buffer = None
         if self.calling_convention == 'python':
-            arg_str = cPickle.dumps(args, protocol=_pickle_version)
+            arg_str = pickle.dumps(args, protocol=_pickle_version)
             task_args_buffer = ffi.new('char[]', arg_str)
             task_args[0].args = task_args_buffer
             task_args[0].arglen = len(arg_str)
@@ -786,7 +847,7 @@ class IndexLaunch(object):
 
         if self.saved_args is None:
             self.saved_args = args
-        for arg, saved_arg in itertools.izip_longest(args, self.saved_args):
+        for arg, saved_arg in zip_longest(args, self.saved_args):
             # TODO: Add support for region arguments
             if isinstance(arg, Region) or isinstance(arg, RegionField):
                 raise Exception('TODO: Support region arguments to an IndexLaunch')

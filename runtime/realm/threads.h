@@ -18,8 +18,8 @@
 #ifndef REALM_THREADS_H
 #define REALM_THREADS_H
 
-#include "realm_config.h"
-#include <realm/activemsg.h>
+#include "realm/realm_config.h"
+#include "realm/activemsg.h"
 
 #ifdef REALM_USE_USER_THREADS
 #ifdef __MACH__
@@ -163,6 +163,10 @@ namespace Realm {
     void stop_operation(Operation *op);
     Operation *get_operation(void) const;
 
+    // changes the priority of the thread (and, by extension, the operation it
+    //   is working on)
+    void set_priority(int new_priority);
+
 #ifdef REALM_USE_USER_THREADS
     // perform a user-level thread switch
     // if called from a kernel thread, that thread becomes the "host" for the user thread
@@ -257,6 +261,8 @@ namespace Realm {
     // notification that a thread is ready (this will generally come from some thread other
     //  than the one that's now ready)
     virtual void thread_ready(Thread *thread) = 0;
+
+    virtual void set_thread_priority(Thread *thread, int new_priority) = 0;
 
   protected:
     // delegates friendship of Thread with subclasses
@@ -553,6 +559,6 @@ namespace Realm {
 
 } // namespace Realm
 
-#include "threads.inl"
+#include "realm/threads.inl"
 
 #endif // REALM_THREADS_H

@@ -18,12 +18,12 @@
 #ifndef REALM_EVENT_IMPL_H
 #define REALM_EVENT_IMPL_H
 
-#include "event.h"
-#include "id.h"
-#include "nodeset.h"
-#include "faults.h"
+#include "realm/event.h"
+#include "realm/id.h"
+#include "realm/nodeset.h"
+#include "realm/faults.h"
 
-#include <realm/activemsg.h>
+#include "realm/activemsg.h"
 
 #include <vector>
 #include <map>
@@ -175,6 +175,7 @@ namespace Realm {
       static Barrier::timestamp_t barrier_adjustment_timestamp;
 
       BarrierImpl(void);
+      ~BarrierImpl(void);
 
       void init(ID _me, unsigned _init_owner);
 
@@ -385,7 +386,7 @@ namespace Realm {
 	
 }; // namespace Realm
 
-#include "event_impl.inl"
+#include "realm/event_impl.inl"
 
 #endif // ifndef REALM_EVENT_IMPL_H
 

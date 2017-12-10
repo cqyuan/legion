@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-#include <realm/realm_config.h>
+#include "realm/realm_config.h"
 
 // include gasnet header files before activemsg.h to make sure we have
 //  definitions for gasnet_hsl_t and gasnett_cond_t
@@ -52,14 +52,10 @@ static const void *ignore_gasnet_warning2 __attribute__((unused)) = (void *)_gas
 
 #endif
 
-#include <realm/activemsg.h>
-
-#ifndef __GNUC__
-#include "atomics.h" // for __sync_add_and_fetch
-#endif
+#include "realm/activemsg.h"
 
 #include <queue>
-#include <cassert>
+#include <assert.h>
 #ifdef REALM_PROFILE_AM_HANDLERS
 #include <math.h>
 #endif
@@ -69,7 +65,7 @@ static const void *ignore_gasnet_warning2 __attribute__((unused)) = (void *)_gas
 #include <fcntl.h>
 #endif
 
-#include <realm/threads.h>
+#include "realm/threads.h"
 #include "realm/timers.h"
 #include "realm/logging.h"
 
@@ -184,7 +180,7 @@ void record_activemsg_profiling(int msgid,
 NodeID get_message_source(token_t token)
 {
   gasnet_node_t src;
-  CHECK_GASNET( gasnet_AMGetMsgSource(token, &src) );
+  CHECK_GASNET( gasnet_AMGetMsgSource(reinterpret_cast<gasnet_token_t>(token), &src) );
 #ifdef DEBUG_AMREQUESTS
   printf("%d: source = %d\n", gasnet_mynode(), src);
 #endif
@@ -193,7 +189,7 @@ NodeID get_message_source(token_t token)
 
 void send_srcptr_release(token_t token, uint64_t srcptr)
 {
-  CHECK_GASNET( gasnet_AMReplyShort2(token, MSGID_RELEASE_SRCPTR, (handlerarg_t)srcptr, (handlerarg_t)(srcptr >> 32)) );
+  CHECK_GASNET( gasnet_AMReplyShort2(reinterpret_cast<gasnet_token_t>(token), MSGID_RELEASE_SRCPTR, (handlerarg_t)srcptr, (handlerarg_t)(srcptr >> 32)) );
 }
 
 #ifdef DEBUG_MEM_REUSE

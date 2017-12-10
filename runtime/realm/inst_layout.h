@@ -18,8 +18,8 @@
 #ifndef REALM_INST_LAYOUT_H
 #define REALM_INST_LAYOUT_H
 
-#include "indexspace.h"
-#include "serialize.h"
+#include "realm/indexspace.h"
+#include "realm/serialize.h"
 
 #include <vector>
 #include <map>
@@ -70,7 +70,8 @@ namespace Realm {
 
     template <int N, typename T>
     static InstanceLayoutGeneric *choose_instance_layout(IndexSpace<N,T> is,
-							 const InstanceLayoutConstraints& ilc);
+							 const InstanceLayoutConstraints& ilc,
+                                                         const int dim_order[N]);
 
     size_t bytes_used;
     size_t alignment_reqd;
@@ -345,7 +346,7 @@ namespace Realm {
 
 }; // namespace Realm
 
-#include "inst_layout.inl"
+#include "realm/inst_layout.inl"
 
 #endif // ifndef REALM_INST_LAYOUT_H
 

@@ -1,8 +1,7 @@
-#include "legion_profiling_serializer.h"
-#include "runtime.h"
-//#include "legion_ops.h"
-//#include "legion_tasks.h"
-#include "lowlevel_config.h"
+#include "legion/legion_profiling_serializer.h"
+#include "legion/runtime.h"
+//#include "legion/legion_ops.h"
+//#include "legion/legion_tasks.h"
 
 #include <sstream>
 #include <string>
@@ -127,6 +126,7 @@ namespace Legion {
       ss << "TaskWaitInfo {"
          << "id:" << TASK_WAIT_INFO_ID                       << delim
          << "op_id:UniqueID:"         << sizeof(UniqueID)    << delim
+         << "task_id:TaskID:"         << sizeof(TaskID)      << delim
          << "variant_id:UniqueID:"    << sizeof(UniqueID)    << delim
          << "wait_start:timestamp_t:" << sizeof(timestamp_t) << delim
          << "wait_ready:timestamp_t:" << sizeof(timestamp_t) << delim
@@ -145,6 +145,7 @@ namespace Legion {
       ss << "TaskInfo {"
          << "id:" << TASK_INFO_ID                         << delim
          << "op_id:UniqueID:"      << sizeof(UniqueID)    << delim
+         << "task_id:TaskID:"      << sizeof(TaskID)      << delim
          << "variant_id:UniqueID:" << sizeof(UniqueID)    << delim
          << "proc_id:ProcID:"      << sizeof(ProcID)      << delim
          << "create:timestamp_t:"  << sizeof(timestamp_t) << delim
@@ -414,6 +415,7 @@ namespace Legion {
       int ID = TASK_WAIT_INFO_ID;
       lp_fwrite(f, (char*)&ID, sizeof(ID));
       lp_fwrite(f, (char*)&(task_info.op_id),     sizeof(task_info.op_id));
+      lp_fwrite(f, (char*)&(task_info.task_id),   sizeof(task_info.task_id));
       lp_fwrite(f, (char*)&(task_info.variant_id),sizeof(task_info.variant_id));
       lp_fwrite(f, (char*)&(wait_info.wait_start),sizeof(wait_info.wait_start));
       lp_fwrite(f, (char*)&(wait_info.wait_ready),sizeof(wait_info.wait_ready));
@@ -443,6 +445,7 @@ namespace Legion {
       int ID = TASK_INFO_ID;
       lp_fwrite(f, (char*)&ID, sizeof(ID));
       lp_fwrite(f, (char*)&(task_info.op_id),     sizeof(task_info.op_id));
+      lp_fwrite(f, (char*)&(task_info.task_id),   sizeof(task_info.task_id));
       lp_fwrite(f, (char*)&(task_info.variant_id),sizeof(task_info.variant_id));
       lp_fwrite(f, (char*)&(task_info.proc_id),   sizeof(task_info.proc_id));
       lp_fwrite(f, (char*)&(task_info.create),    sizeof(task_info.create));
@@ -767,9 +770,9 @@ namespace Legion {
                                   const LegionProfInstance::TaskInfo& task_info)
     //--------------------------------------------------------------------------
     {
-      log_prof.print("Prof Task Wait Info %llu %lu %llu %llu %llu",
-                  task_info.op_id, task_info.variant_id, wait_info.wait_start, 
-                  wait_info.wait_ready, wait_info.wait_end);
+      log_prof.print("Prof Task Wait Info %llu %u %lu %llu %llu %llu",
+                task_info.op_id, task_info.task_id, task_info.variant_id, 
+                wait_info.wait_start, wait_info.wait_ready, wait_info.wait_end);
     }
 
     //--------------------------------------------------------------------------
@@ -788,9 +791,10 @@ namespace Legion {
                                   const LegionProfInstance::TaskInfo& task_info)
     //--------------------------------------------------------------------------
     {
-      log_prof.print("Prof Task Info %llu %lu " IDFMT " %llu %llu %llu %llu",
-         task_info.op_id, task_info.variant_id, task_info.proc_id, 
-         task_info.create, task_info.ready, task_info.start, task_info.stop);
+      log_prof.print("Prof Task Info %llu %u %lu " IDFMT " %llu %llu %llu %llu",
+                     task_info.op_id, task_info.task_id, task_info.variant_id, 
+                     task_info.proc_id, task_info.create, task_info.ready, 
+                     task_info.start, task_info.stop);
     }
 
     //--------------------------------------------------------------------------

@@ -16,14 +16,14 @@
 #ifndef LOWLEVEL_DMA_H
 #define LOWLEVEL_DMA_H
 
-#include <realm/activemsg.h>
-#include <realm/id.h>
-#include <realm/memory.h>
-#include <realm/redop.h>
-#include <realm/instance.h>
-#include <realm/event.h>
-#include <realm/runtime_impl.h>
-#include <realm/inst_impl.h>
+#include "realm/activemsg.h"
+#include "realm/id.h"
+#include "realm/memory.h"
+#include "realm/redop.h"
+#include "realm/instance.h"
+#include "realm/event.h"
+#include "realm/runtime_impl.h"
+#include "realm/inst_impl.h"
 
 namespace Realm {
   class CoreReservationSet;
@@ -330,8 +330,6 @@ namespace Realm {
         void print(std::ostream& os) const {os << "IBAllocOp"; };
       };
 
-      IBAllocOp* ib_req;
-      Event ib_completion;
       std::vector<Memory> mem_path;
       // </NEW_DMA>
 

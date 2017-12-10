@@ -18,11 +18,11 @@
 #define __DEFAULT_MAPPER_H__
 
 #include "legion.h"
-#include "legion_mapping.h"
-#include "mapping_utilities.h"
+#include "legion/legion_mapping.h"
+#include "mappers/mapping_utilities.h"
 
-#include <cstdlib>
-#include <cassert>
+#include <stdlib.h>
+#include <assert.h>
 #include <algorithm>
 
 namespace Legion {
@@ -81,6 +81,9 @@ namespace Legion {
 	// should this task be assigned to a processor in the same address
 	//  space as the parent task
 	SAME_ADDRESS_SPACE = (1 << 2),
+
+	// should this instance be placed in an RDMA-able memory if possible?
+	PREFER_RDMA_MEMORY = (1 << 3),
       };
     protected: // Internal types
       struct VariantInfo {
@@ -338,7 +341,8 @@ namespace Legion {
                                     const TaskLayoutConstraintSet &layout1,
                                     const TaskLayoutConstraintSet &layout2);
       virtual Memory default_policy_select_target_memory(MapperContext ctx, 
-                                    Processor target_proc);
+                                    Processor target_proc,
+                                    const RegionRequirement &req);
       virtual LayoutConstraintID default_policy_select_layout_constraints(
                                     MapperContext ctx, Memory target_memory,
                                     const RegionRequirement &req,
@@ -351,7 +355,7 @@ namespace Legion {
                                     const RegionRequirement &req);
       virtual Memory default_policy_select_constrained_instance_constraints(
 				    MapperContext ctx,
-				    const std::vector</*const*/ Task *> &tasks,
+				    const std::vector<const Task *> &tasks,
 				    const std::vector<unsigned> &req_indexes,
 				    const std::vector<Processor> &target_procs,
 				    const std::set<LogicalRegion> &needed_regions,
@@ -514,7 +518,8 @@ namespace Legion {
                LayoutConstraintID>             layout_constraint_cache;
       std::map<std::pair<Memory::Kind,ReductionOpID>,
                LayoutConstraintID>             reduction_constraint_cache;
-      std::map<Processor,Memory>               cached_target_memory;
+      std::map<Processor,Memory>               cached_target_memory,
+	                                       cached_rdma_target_memory;
     protected:
       // The maximum number of tasks a mapper will allow to be stolen at a time
       // Controlled by -dm:thefts
@@ -542,7 +547,7 @@ namespace LegionRuntime {
 };
 
 // Include template definitions
-#include "default_mapper.inl"
+#include "mappers/default_mapper.inl"
 
 #endif // __DEFAULT_MAPPER_H__
 

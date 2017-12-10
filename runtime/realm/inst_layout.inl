@@ -16,7 +16,7 @@
 // Layout descriptors for Realm RegionInstances
 
 // NOP but useful for IDE's
-#include "indexspace.h"
+#include "realm/indexspace.h"
 
 namespace Realm {
 
@@ -75,7 +75,8 @@ namespace Realm {
 
   template <int N, typename T>
   inline /*static*/ InstanceLayoutGeneric *InstanceLayoutGeneric::choose_instance_layout(IndexSpace<N,T> is,
-											 const InstanceLayoutConstraints& ilc)
+											 const InstanceLayoutConstraints& ilc,
+                                                                                         const int dim_order[N])
   {
     InstanceLayout<N,T> *layout = new InstanceLayout<N,T>;
     layout->bytes_used = 0;
@@ -136,7 +137,6 @@ namespace Realm {
 	gsize = max(gsize, offset + it2->size);
 	if((it2->alignment > 1) && ((galign % it2->alignment) != 0))
 	  galign = lcm(galign, size_t(it2->alignment));
-	
 	field_offsets[it2->field_id] = offset;
 	field_sizes[it2->field_id] = it2->size;
       }
@@ -175,12 +175,13 @@ namespace Realm {
 	//  existing pieces
 	size_t piece_start = round_up(layout->bytes_used, galign);
 	piece->offset = piece_start;
-	// always do fortran order for now
 	size_t stride = gsize;
 	for(int i = 0; i < N; i++) {
-	  piece->strides[i] = stride;
-	  piece->offset -= bloated.lo[i] * stride;
-	  stride *= (bloated.hi[i] - bloated.lo[i] + 1);
+          const int dim = dim_order[i];
+          assert((0 <= dim) && (dim < N));
+	  piece->strides[dim] = stride;
+	  piece->offset -= bloated.lo[dim] * stride;
+	  stride *= (bloated.hi[dim] - bloated.lo[dim] + 1);
 	}
 
 	// final value of stride is total bytes used by piece - use that
@@ -705,28 +706,28 @@ namespace Realm {
 					 FieldID field_id, const Rect<N,T>& subrect,
 					 size_t subfield_offset /*= 0*/)
   {
-    // Special case for empty regions
-    if(subrect.empty()) {
-      base = 0;
-      for(int i = 0; i < N; i++) strides[i] = 0;
-      return;
-    }
     const InstanceLayout<N,T> *layout = dynamic_cast<const InstanceLayout<N,T> *>(inst.get_layout());
     std::map<FieldID, InstanceLayoutGeneric::FieldLayout>::const_iterator it = layout->fields.find(field_id);
     assert(it != layout->fields.end());
     const InstancePieceList<N,T>& ipl = layout->piece_lists[it->second.list_idx];
-    
-    // find the piece that holds the lo corner of the subrect and insist it
-    //  exists, covers the whole subrect, and is affine
-    const InstanceLayoutPiece<N,T> *ilp = ipl.find_piece(subrect.lo);
-    assert(ilp && ilp->bounds.contains(subrect));
-    assert((ilp->layout_type == InstanceLayoutPiece<N,T>::AffineLayoutType));
-    const AffineLayoutPiece<N,T> *alp = static_cast<const AffineLayoutPiece<N,T> *>(ilp);
-    base = reinterpret_cast<intptr_t>(inst.pointer_untyped(0,
-							   layout->bytes_used));
-    assert(base != 0);
-    base += alp->offset + it->second.rel_offset + subfield_offset;
-    strides = alp->strides;
+
+    // special case for empty regions
+    if(subrect.empty()) {
+      base = 0;
+      for(int i = 0; i < N; i++) strides[i] = 0;
+    } else {
+      // find the piece that holds the lo corner of the subrect and insist it
+      //  exists, covers the whole subrect, and is affine
+      const InstanceLayoutPiece<N,T> *ilp = ipl.find_piece(subrect.lo);
+      assert(ilp && ilp->bounds.contains(subrect));
+      assert((ilp->layout_type == InstanceLayoutPiece<N,T>::AffineLayoutType));
+      const AffineLayoutPiece<N,T> *alp = static_cast<const AffineLayoutPiece<N,T> *>(ilp);
+      base = reinterpret_cast<intptr_t>(inst.pointer_untyped(0,
+							     layout->bytes_used));
+      assert(base != 0);
+      base += alp->offset + it->second.rel_offset + subfield_offset;
+      strides = alp->strides;
+    }
 #ifdef REALM_ACCESSOR_DEBUG
     dbg_inst = inst;
     dbg_bounds = alp->bounds;
@@ -768,6 +769,11 @@ namespace Realm {
     if(it == layout->fields.end())
       return false;
     const InstancePieceList<N,T>& ipl = layout->piece_lists[it->second.list_idx];
+
+    // as long as we had the right field, we're always compatible with an
+    //  empty subrect
+    if(subrect.empty())
+      return true;
     
     // find the piece that holds the lo corner of the subrect and insist it
     //  exists, covers the whole subrect, and is affine

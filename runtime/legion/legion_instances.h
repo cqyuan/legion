@@ -16,11 +16,11 @@
 #ifndef __LEGION_INSTANCES_H__
 #define __LEGION_INSTANCES_H__
 
-#include "runtime.h"
-#include "legion_types.h"
-#include "legion_utilities.h"
-#include "legion_allocation.h"
-#include "garbage_collection.h"
+#include "legion/runtime.h"
+#include "legion/legion_types.h"
+#include "legion/legion_utilities.h"
+#include "legion/legion_allocation.h"
+#include "legion/garbage_collection.h"
 
 namespace Legion {
   namespace Internal {
@@ -131,6 +131,7 @@ namespace Legion {
       inline bool is_fold_manager(void) const;
       inline bool is_list_manager(void) const;
       inline bool is_virtual_manager(void) const;
+      inline bool is_external_instance(void) const;
       inline InstanceManager* as_instance_manager(void) const;
       inline ReductionManager* as_reduction_manager(void) const;
       inline FoldReductionManager* as_fold_manager(void) const;
@@ -194,12 +195,14 @@ namespace Legion {
       void set_garbage_collection_priority(MapperID mapper_id, Processor p,
                                            GCPriority priority); 
     public:
-      static inline DistributedID encode_instance_did(DistributedID did);
+      static inline DistributedID encode_instance_did(DistributedID did,
+                                                      bool external);
       static inline DistributedID encode_reduction_fold_did(DistributedID did);
       static inline DistributedID encode_reduction_list_did(DistributedID did);
       static inline bool is_instance_did(DistributedID did);
       static inline bool is_reduction_fold_did(DistributedID did);
       static inline bool is_reduction_list_did(DistributedID did);
+      static inline bool is_external_did(DistributedID did);
     public:
       RegionTreeForest *const context;
       MemoryManager *const memory_manager;
@@ -248,6 +251,7 @@ namespace Legion {
                       RegionNode *node, LayoutDescription *desc, 
                       const PointerConstraint &constraint,
                       bool register_now, ApEvent use_event,
+                      bool external_instance,
                       Reservation read_only_mapping_reservation); 
       InstanceManager(const InstanceManager &rhs);
       virtual ~InstanceManager(void);
@@ -284,8 +288,6 @@ namespace Legion {
       static void handle_send_manager(Runtime *runtime, 
                                       AddressSpaceID source,
                                       Deserializer &derez);
-    public:
-      bool is_attached_file(void) const;
     public:
       // Event that needs to trigger before we can start using
       // this physical instance.
@@ -482,6 +484,7 @@ namespace Legion {
         { return get_singleton(); }
       static void initialize_virtual_instance(Runtime *runtime,
                                               DistributedID did);
+      static void finalize_virtual_instance(void);
     protected:
       static inline VirtualManager*& get_singleton(void)
       {
@@ -517,6 +520,12 @@ namespace Legion {
       RegionNode* find_common_ancestor(RegionNode *one, RegionNode *two) const;
     protected:
       void compute_layout_parameters(void);
+    public:
+      static void convert_layout_constraints(
+                    const LayoutConstraintSet &constraints,
+                    const std::vector<FieldID> &field_set,
+                    const std::vector<size_t> &field_sizes,
+                          Realm::InstanceLayoutConstraints &realm_constraints);
     protected:
       const std::vector<LogicalRegion> &regions;
       LayoutConstraintSet constraints;
@@ -545,10 +554,13 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     /*static*/ inline DistributedID PhysicalManager::encode_instance_did(
-                                                              DistributedID did)
+                                               DistributedID did, bool external)
     //--------------------------------------------------------------------------
     {
-      return LEGION_DISTRIBUTED_HELP_ENCODE(did, INSTANCE_MANAGER_DC);
+      if (external)
+        return LEGION_DISTRIBUTED_HELP_ENCODE(did, INSTANCE_MANAGER_DC | 0x10);
+      else
+        return LEGION_DISTRIBUTED_HELP_ENCODE(did, INSTANCE_MANAGER_DC);
     }
 
     //--------------------------------------------------------------------------
@@ -594,6 +606,13 @@ namespace Legion {
     }
 
     //--------------------------------------------------------------------------
+    /*static*/ inline bool PhysicalManager::is_external_did(DistributedID did)
+    //--------------------------------------------------------------------------
+    {
+      return ((LEGION_DISTRIBUTED_HELP_DECODE(did) & 0x10) == 0x10);
+    }
+
+    //--------------------------------------------------------------------------
     inline bool PhysicalManager::is_reduction_manager(void) const
     //--------------------------------------------------------------------------
     {
@@ -626,6 +645,13 @@ namespace Legion {
     //--------------------------------------------------------------------------
     {
       return (did == 0);
+    }
+
+    //--------------------------------------------------------------------------
+    inline bool PhysicalManager::is_external_instance(void) const
+    //--------------------------------------------------------------------------
+    {
+      return is_external_did(did);
     }
 
     //--------------------------------------------------------------------------

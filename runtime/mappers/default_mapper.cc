@@ -14,10 +14,10 @@
  */
 
 #include "legion.h"
-#include "default_mapper.h"
+#include "mappers/default_mapper.h"
 
-#include <cstdlib>
-#include <cassert>
+#include <stdlib.h>
+#include <assert.h>
 #include <limits.h>
 #include <algorithm>
 
@@ -1463,12 +1463,13 @@ namespace Legion {
             const TaskLayoutConstraintSet &layout_constraints =
                 runtime->find_task_layout_constraints(ctx,
                                       task.task_id, output.chosen_variant);
-            Memory target_memory = default_policy_select_target_memory(ctx, 
-                                                         task.target_proc);
             for (std::vector<unsigned>::const_iterator it = 
                   reduction_indexes.begin(); it != 
                   reduction_indexes.end(); it++)
             {
+              Memory target_memory = default_policy_select_target_memory(ctx,
+                                                         task.target_proc,
+                                                         task.regions[*it]);
               std::set<FieldID> copy = task.regions[*it].privilege_fields;
               if (!default_create_custom_instances(ctx, task.target_proc,
                   target_memory, task.regions[*it], *it, copy, 
@@ -1497,8 +1498,6 @@ namespace Legion {
       // possibly because a new field was allocated in a region, so our old
       // cached physical instance(s) is(are) no longer valid
       bool needs_field_constraint_check = false;
-      Memory target_memory = default_policy_select_target_memory(ctx, 
-                                                         task.target_proc);
       if (cache_policy == DEFAULT_CACHE_POLICY_ENABLE && finder != cached_task_mappings.end())
       {
         bool found = false;
@@ -1531,6 +1530,9 @@ namespace Legion {
             {
               if (task.regions[idx].privilege == REDUCE)
               {
+                Memory target_memory = default_policy_select_target_memory(ctx,
+                                                         task.target_proc,
+                                                         task.regions[idx]);
                 std::set<FieldID> copy = task.regions[idx].privilege_fields;
                 if (!default_create_custom_instances(ctx, task.target_proc,
                     target_memory, task.regions[idx], idx, copy, 
@@ -1588,6 +1590,9 @@ namespace Legion {
             missing_fields[idx].empty())
           continue;
         // See if this is a reduction      
+        Memory target_memory = default_policy_select_target_memory(ctx,
+                                                         task.target_proc,
+                                                         task.regions[idx]);
         if (task.regions[idx].privilege == REDUCE)
         {
           has_reductions = true;
@@ -2002,14 +2007,23 @@ namespace Legion {
 
     //--------------------------------------------------------------------------
     Memory DefaultMapper::default_policy_select_target_memory(MapperContext ctx,
-                                                          Processor target_proc)
+                                                   Processor target_proc,
+                                                   const RegionRequirement &req)
     //--------------------------------------------------------------------------
     {
+      bool prefer_rdma = ((req.tag & DefaultMapper::PREFER_RDMA_MEMORY) != 0);
+
       // TODO: deal with the updates in machine model which will
       //       invalidate this cache
-      std::map<Processor,Memory>::iterator it =
-        cached_target_memory.find(target_proc);
-      if (it != cached_target_memory.end()) return it->second;
+      std::map<Processor,Memory>::iterator it;
+      if (prefer_rdma)
+      {
+	it = cached_rdma_target_memory.find(target_proc);
+	if (it != cached_rdma_target_memory.end()) return it->second;
+      } else {
+        it = cached_target_memory.find(target_proc);
+	if (it != cached_target_memory.end()) return it->second;
+      }
 
       // Find the visible memories from the processor for the given kind
       Machine::MemoryQuery visible_memories(machine);
@@ -2021,8 +2035,10 @@ namespace Legion {
         assert(false);
       }
       // Figure out the memory with the highest-bandwidth
-      Memory chosen = Memory::NO_MEMORY;
+      Memory best_memory = Memory::NO_MEMORY;
       unsigned best_bandwidth = 0;
+      Memory best_rdma_memory = Memory::NO_MEMORY;
+      unsigned best_rdma_bandwidth = 0;
       std::vector<Machine::ProcessorMemoryAffinity> affinity(1);
       for (Machine::MemoryQuery::iterator it = visible_memories.begin();
             it != visible_memories.end(); it++)
@@ -2031,14 +2047,27 @@ namespace Legion {
         machine.get_proc_mem_affinity(affinity, target_proc, *it,
 				      false /*not just local affinities*/);
         assert(affinity.size() == 1);
-        if (!chosen.exists() || (affinity[0].bandwidth > best_bandwidth)) {
-          chosen = *it;
+        if (!best_memory.exists() || (affinity[0].bandwidth > best_bandwidth)) {
+          best_memory = *it;
           best_bandwidth = affinity[0].bandwidth;
         }
+        if ((it->kind() == Memory::REGDMA_MEM) &&
+	    (!best_rdma_memory.exists() ||
+	     (affinity[0].bandwidth > best_rdma_bandwidth))) {
+          best_rdma_memory = *it;
+          best_rdma_bandwidth = affinity[0].bandwidth;
+        }
       }
-      assert(chosen.exists());
-      cached_target_memory[target_proc] = chosen;
-      return chosen;
+      assert(best_memory.exists());
+      if (prefer_rdma)
+      {
+	if (!best_rdma_memory.exists()) best_rdma_memory = best_memory;
+	cached_rdma_target_memory[target_proc] = best_rdma_memory;
+	return best_rdma_memory;
+      } else {
+	cached_target_memory[target_proc] = best_memory;
+	return best_memory;
+      }
     }
 
     //--------------------------------------------------------------------------
@@ -2534,7 +2563,8 @@ namespace Legion {
         }
         else
           target_memory = default_policy_select_target_memory(ctx,
-                                  inline_op.parent_task->current_proc);
+                                  inline_op.parent_task->current_proc,
+                                  inline_op.requirement);
         if (creation_constraints.field_constraint.field_set.empty())
           creation_constraints.add_constraint(FieldConstraint(
                 inline_op.requirement.privilege_fields, false/*contig*/));
@@ -2564,7 +2594,8 @@ namespace Legion {
           return;
         // Otherwise, let's make an instance for our missing fields
         target_memory = default_policy_select_target_memory(ctx,
-                                        inline_op.parent_task->current_proc);
+                                        inline_op.parent_task->current_proc,
+                                        inline_op.requirement);
         LayoutConstraintID our_layout_id = 
          default_policy_select_layout_constraints(ctx, target_memory, 
                                                inline_op.requirement, 
@@ -2765,7 +2796,8 @@ namespace Legion {
         // is running.
         Memory target_memory =
           default_policy_select_target_memory(ctx, 
-                                              close.parent_task->current_proc);
+                                              close.parent_task->current_proc,
+                                              close.requirement);
         LayoutConstraintSet constraints;
         default_policy_select_constraints(ctx, constraints, target_memory,
                                           close.requirement);
@@ -2981,7 +3013,8 @@ namespace Legion {
         return;
       // Otherwise, let's make an instance for our missing fields
       Memory target_memory = default_policy_select_target_memory(ctx,
-                                      partition.parent_task->current_proc);
+                                      partition.parent_task->current_proc,
+                                      partition.requirement);
       bool force_new_instances = false;
       LayoutConstraintID our_layout_id = 
        default_policy_select_layout_constraints(ctx, target_memory, 
@@ -3278,7 +3311,7 @@ namespace Legion {
     Memory DefaultMapper::
       default_policy_select_constrained_instance_constraints(
                                   MapperContext ctx,
-                                  const std::vector</*const*/ Task *> &tasks,
+                                  const std::vector<const Task *> &tasks,
                                   const std::vector<unsigned> &req_indexes,
                                   const std::vector<Processor> &target_procs,
                                   const std::set<LogicalRegion> &needed_regions,
@@ -3307,8 +3340,9 @@ namespace Legion {
       //  ask for layout choices
       unsigned home_task_idx = accessing_task_idxs[0];
       Processor target_proc = target_procs[home_task_idx];
-      Memory target_memory = default_policy_select_target_memory(ctx, 
-								 target_proc);
+      Memory target_memory = default_policy_select_target_memory(ctx,
+                      target_proc,
+                      tasks[home_task_idx]->regions[req_indexes[home_task_idx]]);
       // if we have more than one task, double-check that this memory is kosher 
       // with the other ones too
       if(accessing_task_idxs.size() > 1) {
@@ -3530,7 +3564,7 @@ namespace Legion {
         std::set<FieldID> needed_fields;
         for (unsigned idx = 0; idx < constraint.constrained_tasks.size(); idx++)
         {
-          Task *task = constraint.constrained_tasks[idx];
+          const Task *task = constraint.constrained_tasks[idx];
           unsigned req_idx = constraint.requirement_indexes[idx];
           needed_regions.insert(task->regions[req_idx].region);
           needed_fields.insert(task->regions[req_idx].privilege_fields.begin(),
@@ -3540,7 +3574,7 @@ namespace Legion {
 	// Now delegate to a policy routine to decide on a memory and layout
 	// constraints for this constrained instance
 	std::vector<Processor> target_procs;
-	for(std::vector<Task *>::const_iterator it = 
+	for(std::vector<const Task *>::const_iterator it = 
             constraint.constrained_tasks.begin();
 	    it != constraint.constrained_tasks.end();
 	    ++it)

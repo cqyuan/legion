@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-#include "channel.h"
-#include "channel_disk.h"
-#include <realm/transfer/transfer.h>
+#include "realm/transfer/channel.h"
+#include "realm/transfer/channel_disk.h"
+#include "realm/transfer/transfer.h"
 
 TYPE_IS_SERIALIZABLE(Realm::XferOrder::Type);
 TYPE_IS_SERIALIZABLE(Realm::XferDes::XferKind);
@@ -100,6 +100,10 @@ namespace Realm {
 	    return max_avail;
 	}
 
+	// recheck noncontig as well
+	if(start < first_noncontig)
+	  return 0;
+
 	// otherwise find the first span after us and then back up one to find
 	//  the one that might contain our 'start'
 	std::map<size_t, size_t>::const_iterator it = spans.upper_bound(start);
@@ -163,10 +167,34 @@ namespace Realm {
 	{
 	  AutoHSLLock al(mutex);
 
-	  if(pos < first_noncontig)
-	    first_noncontig = pos;
+	  // the checks above were done without the lock, so it is possible
+	  //  that by the time we've got the lock here, contig_amount has
+	  //  caught up to us
+	  if(__sync_bool_compare_and_swap(&contig_amount, pos, span_end)) {
+	    // see if any other spans are now contiguous as well
+	    while(!spans.empty()) {
+	      std::map<size_t, size_t>::iterator it = spans.begin();
+	      if(it->first == span_end) {
+		bool ok = __sync_bool_compare_and_swap(&contig_amount,
+						       span_end,
+						       span_end + it->second);
+		assert(ok);
+		span_end += it->second;
+		spans.erase(it);
+	      } else {
+		// this is the new first noncontig
+		first_noncontig = it->first;
+		break;
+	      }
+	    }
+	    if(spans.empty())
+	      first_noncontig = (size_t)-1;
+	  } else {
+	    if(pos < first_noncontig)
+	      first_noncontig = pos;
 
-	  spans[pos] = count;
+	    spans[pos] = count;
+	  }
 	}
 	
 	return 0; // no change to contig_amount
@@ -553,79 +581,68 @@ namespace Realm {
 		log_request.info() << "pred limits xfer: " << max_bytes << " -> " << pre_max;
 		max_bytes = pre_max;
 	      }
+
+	      // further limit by bytes we've actually received
+	      max_bytes = seq_pre_write.span_exists(read_bytes_total, max_bytes);
+	      if(max_bytes == 0) {
+		// TODO: put this XD to sleep until we do have data
+		break;
+	      }
 	    }
 
+	    if(next_xd_guid != XFERDES_NO_GUID) {
+	      // if we're writing to an intermediate buffer, make sure to not
+	      //  overwrite previously written data that has not been read yet
+	      max_bytes = seq_next_read.span_exists(write_bytes_total, max_bytes);
+	      if(max_bytes == 0) {
+		// TODO: put this XD to sleep until we do have data
+		break;
+	      }
+	    }
+
+	    // tentatively get as much as we can from the source iterator
 	    size_t src_bytes = src_iter->step(max_bytes, src_info,
 					      flags,
 					      true /*tentative*/);
-	    size_t src_bytes_avail;
-	    if(pre_xd_guid == XFERDES_NO_GUID) {
-	      src_bytes_avail = src_bytes;
-	    } else {
-	      // if we're reading from an intermediate buffer, make sure we
-	      //  have enough data from the predecessor
-	      assert((src_info.num_lines == 1) && (src_info.num_planes == 1));
-	      src_bytes_avail = seq_pre_write.span_exists(read_bytes_total,
-							  src_bytes);
-	      if(src_bytes_avail == 0) {
-		// TODO: put this XD to sleep until we do have data
-		src_iter->cancel_step();
-		break;
-	      }
-	      
-	      // if src_bytes_avail < src_bytes, we'll need to redo the src_iter
-	      //  step, but wait until we see if we need to shrink even more due
-	      //  to the destination side
+	    if(src_bytes == 0) {
+	      // not enough space for even one element
+	      // TODO: put this XD to sleep until we do have data
+	      break;
 	    }
 
-	    // destination step must be tentative for an IB that might be full
-	    //  or a non-IB target that might collapse dimensions differently
-	    bool dimension_mismatch_possible = ((flags & TransferIterator::LINES_OK) != 0);
-	    bool dst_step_tentative = ((next_xd_guid != XFERDES_NO_GUID) ||
-				       dimension_mismatch_possible);
+	    // destination step must be tentative for an non-IB source or
+	    //  target that might collapse dimensions differently
+	    bool dimension_mismatch_possible = (((pre_xd_guid == XFERDES_NO_GUID) ||
+						 (next_xd_guid == XFERDES_NO_GUID)) &&
+						((flags & TransferIterator::LINES_OK) != 0));
 
-	    size_t dst_bytes = dst_iter->step(src_bytes_avail, dst_info,
+	    size_t dst_bytes = dst_iter->step(src_bytes, dst_info,
 					      flags,
-					      dst_step_tentative);
-	    if(next_xd_guid != XFERDES_NO_GUID) {
-	      // if we're writing to an intermediate buffer, make sure the
-	      //  next XD has read the data we want to overwrite
-	      assert((dst_info.num_lines == 1) && (dst_info.num_planes == 1));
-	      size_t dst_bytes_avail = seq_next_read.span_exists(write_bytes_total,
-								 dst_bytes);
-	      if(dst_bytes_avail == 0) {
-		// TODO: put this XD to sleep until we do have data
-		dst_iter->cancel_step();
-		src_iter->cancel_step();
-		break;
-	      }
-
-	      // if dst_bytes_avail < dst_bytes, we'll need to redo the dst_iter
-	      // step
-	      if(dst_bytes_avail < dst_bytes) {
-		// cancel and request what we have room to write
-		dst_iter->cancel_step();
-		dst_bytes = dst_iter->step(dst_bytes_avail, dst_info, flags,
-					   dimension_mismatch_possible);
-		assert(dst_bytes == dst_bytes_avail);
-	      } else {
-		// in the absense of dimension mismatches, it's safe now to confirm
-		//  the destination step
-		if(!dimension_mismatch_possible)
-		  dst_iter->confirm_step();
-	      }
+					      dimension_mismatch_possible);
+	    if(dst_bytes == 0) {
+	      // not enough space for even one element
+	      src_iter->cancel_step();
+	      // TODO: put this XD to sleep until we do have data
+	      break;
 	    }
 
 	    // does source now need to be shrunk?
 	    if(dst_bytes < src_bytes) {
 	      // cancel the src step and try to just step by dst_bytes
-	      assert(dst_bytes < src_bytes);  // should never be larger
 	      src_iter->cancel_step();
 	      // this step must still be tentative if a dimension mismatch is
 	      //  posisble
 	      src_bytes = src_iter->step(dst_bytes, src_info, flags,
 					 dimension_mismatch_possible);
-	      // now must match
+	      // a mismatch is still possible if the source is 2+D and the
+	      //  destination wants to stop mid-span
+	      if(src_bytes < dst_bytes) {
+		assert(dimension_mismatch_possible);
+		dst_iter->cancel_step();
+		dst_bytes = dst_iter->step(src_bytes, dst_info, flags,
+					   true /*tentative*/);
+	      }
+	      // byte counts now must match
 	      assert(src_bytes == dst_bytes);
 	    } else {
 	      // in the absense of dimension mismatches, it's safe now to confirm
@@ -3416,6 +3433,8 @@ namespace Realm {
       }
 
       ChannelManager::~ChannelManager(void) {
+	// these are deleted by runtime now
+#if 0
         if (memcpy_channel)
           delete memcpy_channel;
         if (gasnet_read_channel)
@@ -3446,6 +3465,7 @@ namespace Realm {
         for (it = gpu_peer_fb_channels.begin(); it != gpu_peer_fb_channels.end(); it++) {
           delete it->second;
         }
+#endif
 #endif
       }
 
@@ -3546,28 +3566,49 @@ namespace Realm {
 #ifdef USE_CUDA
         // num_threads ++;
 #endif
+	RuntimeImpl *r = get_runtime();
         int idx = 0;
         dma_threads = (DMAThread**) calloc(count, sizeof(DMAThread*));
         // dma thread #1: memcpy
         std::vector<Channel*> channels;
         MemcpyChannel* memcpy_channel = channel_manager->create_memcpy_channel(max_nr);
+	GASNetChannel* gasnet_read_channel = channel_manager->create_gasnet_read_channel(max_nr);
+	GASNetChannel* gasnet_write_channel = channel_manager->create_gasnet_write_channel(max_nr);
         channels.push_back(memcpy_channel);
-        channels.push_back(channel_manager->create_gasnet_read_channel(max_nr));
-        channels.push_back(channel_manager->create_gasnet_write_channel(max_nr));
+        channels.push_back(gasnet_read_channel);
+        channels.push_back(gasnet_write_channel);
+	r->add_dma_channel(memcpy_channel);
+	r->add_dma_channel(gasnet_read_channel);
+	r->add_dma_channel(gasnet_write_channel);
+
         if (count > 1) {
           dma_threads[idx++] = new DMAThread(max_nr, xferDes_queue, channels);
           channels.clear();
           count --;
         }
         // dma thread #2: async xfer
-        channels.push_back(channel_manager->create_remote_write_channel(max_nr));
-        channels.push_back(channel_manager->create_disk_read_channel(max_nr));
-        channels.push_back(channel_manager->create_disk_write_channel(max_nr));
-        channels.push_back(channel_manager->create_file_read_channel(max_nr));
-        channels.push_back(channel_manager->create_file_write_channel(max_nr));
+	RemoteWriteChannel *remote_channel = channel_manager->create_remote_write_channel(max_nr);
+	DiskChannel *disk_read_channel = channel_manager->create_disk_read_channel(max_nr);
+	DiskChannel *disk_write_channel = channel_manager->create_disk_write_channel(max_nr);
+	FileChannel *file_read_channel = channel_manager->create_file_read_channel(max_nr);
+	FileChannel *file_write_channel = channel_manager->create_file_write_channel(max_nr);
+        channels.push_back(remote_channel);
+	channels.push_back(disk_read_channel);
+	channels.push_back(disk_write_channel);
+	channels.push_back(file_read_channel);
+	channels.push_back(file_write_channel);
+        r->add_dma_channel(remote_channel);
+	r->add_dma_channel(disk_read_channel);
+	r->add_dma_channel(disk_write_channel);
+	r->add_dma_channel(file_read_channel);
+	r->add_dma_channel(file_write_channel);
 #ifdef USE_HDF
-        channels.push_back(channel_manager->create_hdf_read_channel(max_nr));
-        channels.push_back(channel_manager->create_hdf_write_channel(max_nr));
+	HDFChannel *hdf_read_channel = channel_manager->create_hdf_read_channel(max_nr);
+	HDFChannel *hdf_write_channel = channel_manager->create_hdf_write_channel(max_nr);
+        channels.push_back(hdf_read_channel);
+        channels.push_back(hdf_write_channel);
+	r->add_dma_channel(hdf_read_channel);
+	r->add_dma_channel(hdf_write_channel);
 #endif
         if (count > 1) {
           dma_threads[idx++] = new DMAThread(max_nr, xferDes_queue, channels);
@@ -3577,19 +3618,20 @@ namespace Realm {
 #ifdef USE_CUDA
         std::vector<Cuda::GPU*>::iterator it;
         for (it = dma_all_gpus.begin(); it != dma_all_gpus.end(); it ++) {
-          channels.push_back(channel_manager->create_gpu_to_fb_channel(max_nr, *it));
-          channels.push_back(channel_manager->create_gpu_from_fb_channel(max_nr, *it));
-          channels.push_back(channel_manager->create_gpu_in_fb_channel(max_nr, *it));
-          channels.push_back(channel_manager->create_gpu_peer_fb_channel(max_nr, *it));
+	  GPUChannel *gpu_to_fb_channel = channel_manager->create_gpu_to_fb_channel(max_nr, *it);
+	  GPUChannel *gpu_from_fb_channel = channel_manager->create_gpu_from_fb_channel(max_nr, *it);
+	  GPUChannel *gpu_in_fb_channel = channel_manager->create_gpu_in_fb_channel(max_nr, *it);
+	  GPUChannel *gpu_peer_fb_channel = channel_manager->create_gpu_peer_fb_channel(max_nr, *it);
+          channels.push_back(gpu_to_fb_channel);
+          channels.push_back(gpu_from_fb_channel);
+          channels.push_back(gpu_in_fb_channel);
+          channels.push_back(gpu_peer_fb_channel);
+          r->add_dma_channel(gpu_to_fb_channel);
+          r->add_dma_channel(gpu_from_fb_channel);
+          r->add_dma_channel(gpu_in_fb_channel);
+          r->add_dma_channel(gpu_peer_fb_channel);
         }
 #endif
-
-	// tell the runtime about all the channels we created
-	RuntimeImpl *r = get_runtime();
-	for(std::vector<Channel *>::const_iterator it = channels.begin();
-	    it != channels.end();
-	    ++it)
-	  r->add_dma_channel(*it);
 
         dma_threads[idx++] = new DMAThread(max_nr, xferDes_queue, channels);
         num_threads = idx;

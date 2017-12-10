@@ -16,11 +16,11 @@
 #ifndef __LEGION_VIEWS_H__
 #define __LEGION_VIEWS_H__
 
-#include "legion_types.h"
-#include "legion_analysis.h"
-#include "legion_utilities.h"
-#include "legion_allocation.h"
-#include "garbage_collection.h"
+#include "legion/legion_types.h"
+#include "legion/legion_analysis.h"
+#include "legion/legion_utilities.h"
+#include "legion/legion_allocation.h"
+#include "legion/garbage_collection.h"
 
 namespace Legion {
   namespace Internal {
@@ -490,6 +490,9 @@ namespace Legion {
     public:
       virtual void send_view(AddressSpaceID target); 
       void update_gc_events(const std::deque<ApEvent> &gc_events);
+    public:
+      void filter_invalid_fields(FieldMask &to_filter,
+                                 VersionInfo &version_info);
     protected:
       // Update the version numbers
       // These first two methods do two-phase updates for copies
