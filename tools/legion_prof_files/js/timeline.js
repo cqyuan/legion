@@ -1914,7 +1914,7 @@ function load_proc_timeline(proc, callback) {
         var d = data[i];
 
         if (all_loaded_procs.has(d.id)) {
-          num_skipped_elems++;
+          // num_skipped_elems++;
           continue;
         }
           
