@@ -2748,6 +2748,7 @@ class State(object):
         # if should_increment:
         #     self.cur_file_number += 1
         #     print("incrementing cur_file_no to: {}".format(self.cur_file_number))
+        self.cur_file_number = 1
 
         proc_list = []
         chan_list = []
@@ -3029,7 +3030,7 @@ def main():
 
         
 
-        pytime.sleep(90)
+        pytime.sleep(10)
         # raw_input()
         print("looped through once")
 
