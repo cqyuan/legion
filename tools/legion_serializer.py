@@ -38,7 +38,7 @@ class LegionDeserializer(object):
         @param[state]:     The state object for our callbacks
         @param[callbacks]: A dictionary containing the callbacks we should use
                            after deserializing each item. You must pass a callback
-                           for 
+                           for
         """
         self.state = state
         self.callbacks = callbacks
@@ -76,8 +76,7 @@ class LegionProfASCIIDeserializer(LegionDeserializer):
         "SliceOwner": re.compile(prefix + r'Prof Slice Owner (?P<parent_id>[0-9]+) (?P<op_id>[0-9]+)'),
         "TaskWaitInfo": re.compile(prefix + r'Prof Task Wait Info (?P<op_id>[0-9]+) (?P<task_id>[0-9]+) (?P<variant_id>[0-9]+) (?P<wait_start>[0-9]+) (?P<wait_ready>[0-9]+) (?P<wait_end>[0-9]+)'),
         "MetaWaitInfo": re.compile(prefix + r'Prof Meta Wait Info (?P<op_id>[0-9]+) (?P<lg_id>[0-9]+) (?P<wait_start>[0-9]+) (?P<wait_ready>[0-9]+) (?P<wait_end>[0-9]+)'),
-        "TaskInfo": re.compile(prefix + r'Prof Task Info (?P<op_id>[0-9]+) (?P<task_id>[0-9]+) (?P<variant_id>[0-9]+) (?P<proc_id>[a-f0-9]+) (?P<create>[0-9]+) (?P<ready>[0-9]+) (?P<start>[0-9]+) (?P<stop>[0-9]+)'),
-        "MetaInfo": re.compile(prefix + r'Prof Meta Info (?P<op_id>[0-9]+) (?P<lg_id>[0-9]+) (?P<proc_id>[a-f0-9]+) (?P<create>[0-9]+) (?P<ready>[0-9]+) (?P<start>[0-9]+) (?P<stop>[0-9]+)'),
+        "TaskInfo": re.compile(prefix + r'Prof Task Info (?P<op_id>[0-9]+) (?P<task_id>[0-9]+) (?P<variant_id>[0-9]+) (?P<proc_id>[a-f0-9]+) (?P<create>[0-9]+) (?P<ready>[0-9]+) (?P<start>[0-9]+) (?P<stop>[0-9]+)'),"MetaInfo": re.compile(prefix + r'Prof Meta Info (?P<op_id>[0-9]+) (?P<lg_id>[0-9]+) (?P<proc_id>[a-f0-9]+) (?P<create>[0-9]+) (?P<ready>[0-9]+) (?P<start>[0-9]+) (?P<stop>[0-9]+)'),
         "CopyInfo": re.compile(prefix + r'Prof Copy Info (?P<op_id>[0-9]+) (?P<src>[a-f0-9]+) (?P<dst>[a-f0-9]+) (?P<size>[0-9]+) (?P<create>[0-9]+) (?P<ready>[0-9]+) (?P<start>[0-9]+) (?P<stop>[0-9]+)'),
         "FillInfo": re.compile(prefix + r'Prof Fill Info (?P<op_id>[0-9]+) (?P<dst>[a-f0-9]+) (?P<create>[0-9]+) (?P<ready>[0-9]+) (?P<start>[0-9]+) (?P<stop>[0-9]+)'),
         "InstCreateInfo": re.compile(prefix + r'Prof Inst Create (?P<op_id>[0-9]+) (?P<inst_id>[a-f0-9]+) (?P<create>[0-9]+)'),
@@ -151,11 +150,23 @@ class LegionProfASCIIDeserializer(LegionDeserializer):
     def parse(self, filename, verbose):
         skipped = 0
         with open(filename, 'rb') as log:
+            numLinesParsed = 0
             matches = 0
             # Keep track of the first and last times
             first_time = 0L
             last_time = 0L
-            for line in log:
+            for i, line in enumerate(log):
+                if i < self.state.last_line:
+                    continue
+
+                numLinesParsed+=1
+                if numLinesParsed >= 200000:
+                    self.state.output_files_and_reset_memory()
+                    numLinesParsed = 0
+
+                if (i % 100000 == 0):
+                    print("parsing line {}".format(i))
+
                 if not self.state.has_spy_data and \
                     (legion_spy.config_pat.match(line) or \
                      legion_spy.detailed_config_pat.match(line)):
@@ -176,6 +187,10 @@ class LegionProfASCIIDeserializer(LegionDeserializer):
                     skipped += 1
                     if verbose:
                         print('Skipping line: %s' % line.strip())
+
+                self.state.last_line += 1
+            if matches > 0:
+                self.state.output_files_and_reset_memory()
         if skipped > 0:
             print('WARNING: Skipped %d lines in %s' % (skipped, filename))
         return matches
@@ -250,7 +265,7 @@ class LegionProfBinaryDeserializer(LegionDeserializer):
             _id = int(m.group('id'))
             params = m.group('params')
             param_data = []
-            
+
             for param_m in LegionProfBinaryDeserializer.params_regex.finditer(params):
                 param_name = param_m.group('param_name')
                 param_type = param_m.group('param_type')
@@ -266,7 +281,7 @@ class LegionProfBinaryDeserializer(LegionDeserializer):
 
         # change the callbacks to be by id
         if not self.callbacks_translated:
-            new_callbacks = {LegionProfBinaryDeserializer.name_to_id[name]: callback 
+            new_callbacks = {LegionProfBinaryDeserializer.name_to_id[name]: callback
                                for name, callback in self.callbacks.iteritems()}
             self.callbacks = new_callbacks
             self.callbacks_translated = True
@@ -299,7 +314,7 @@ class LegionProfBinaryDeserializer(LegionDeserializer):
         try:
             # Try it as a gzip file first
             with getFileObj(filename,compressed=True) as log:
-                return parse_file(log)    
+                return parse_file(log)
         except IOError:
             # If its not a gzip file try a normal file
             with getFileObj(filename,compressed=False) as log:

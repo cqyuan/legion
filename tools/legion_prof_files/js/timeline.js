@@ -30,6 +30,14 @@ var timeBisector = d3.bisector(function(d) { return d.time; }).left;
 //   .domain([0, num_colors])
 //   .range(["green", "blue", "red", "yellow"]);
 
+var globalLastTime = 0;
+
+var intervals = {
+  refreshfiles: null,
+  autoscroll: null,
+  refresh_rate: 2000 // in milliseconds
+};
+
 String.prototype.hashCode = function() {
   var hash = 0;
   if (this.length == 0) return hash;
@@ -37,9 +45,34 @@ String.prototype.hashCode = function() {
     var c = this.charCodeAt(i);
     var b = this.charCodeAt(c % this.length);
     hash = ((hash<<5)-hash)^c^b;
-    hash = hash & hash; 
+    hash = hash & hash;
   }
   return Math.abs(hash);
+}
+
+function parseURLStartEnd() {
+  var match,
+  pl     = /\+/g,  // Regex for replacing addition symbol with a space
+  search = /([^&=]+)=?([^&]*)/g,
+  decode = function (s) { return decodeURIComponent(s.replace(pl, " ")); },
+  query  = window.location.search.substring(1);
+
+  var urlParams = {};
+  while (match = search.exec(query))
+    urlParams[decode(match[1])] = decode(match[2]);
+
+  var zstart = constants.start;
+  if ("start" in urlParams)
+    zstart = Math.max(constants.start, parseFloat(urlParams["start"]));
+
+  var zend = constants.end;
+  if ("end" in urlParams)
+    zend = Math.min(constants.end, parseFloat(urlParams["end"]));
+
+  return {
+    start: zstart,
+    end: zend
+  }
 }
 
 function parseURLParameters() {
@@ -347,6 +380,8 @@ function drawLoaderIcon() {
 }
 
 function showLoaderIcon() {
+  console.log("showing loader");
+  // console.trace();
   state.numLoading++;
   state.loaderSvg.select("g").attr("visibility", "visible");
   state.loaderSvg.attr("width", "40px")
@@ -354,6 +389,7 @@ function showLoaderIcon() {
 }
 
 function hideLoaderIcon() {
+  console.log("hiding loader");
   state.numLoading--;
   if (state.numLoading == 0) {
     state.loaderSvg.select("g").attr("visibility", "hidden");
@@ -379,7 +415,7 @@ function getMouseOver() {
                        .attr("y", y)
                        .attr("class", "desc");
     var depElem = prof_uid_map[d.prof_uid][0];
-    if ((depElem.in.length != 0) || (depElem.out.length != 0) || 
+    if ((depElem.in.length != 0) || (depElem.out.length != 0) ||
         (depElem.children.length !== 0) || (depElem.parents.length !==0 )) {
       d3.select(this).style("cursor", "pointer");
     }
@@ -393,7 +429,7 @@ function getMouseOver() {
     descTexts.push("Total: " + total + "us");
     if ((d.initiation != undefined) && d.initiation != "") {
       descTexts.push("Initiator: " + state.operations[d.initiation].desc);
-    } 
+    }
     descTexts.push(d.title);
 
     var title = text.append("tspan")
@@ -480,7 +516,7 @@ function getProcessors(util_name) {
 
 // This function gets a particular timelineElement. It will also handle
 // creating the children for expand commands
-function getElement(depth, text, full_text, type, num_levels, loader, 
+function getElement(depth, text, full_text, type, num_levels, loader,
                     tsv, _parent, children, enabled, visible) {
 
   // build the dummy element
@@ -497,7 +533,8 @@ function getElement(depth, text, full_text, type, num_levels, loader,
     full_text: full_text,
     type: type,
     tsv: tsv,
-    visible: visible
+    visible: visible,
+    cur_file_number: 1
   };
 
   // Create child elements. Child elements will be enabled, but they will be
@@ -505,9 +542,9 @@ function getElement(depth, text, full_text, type, num_levels, loader,
   if (children != undefined) {
     children.forEach(function(child) {
       var util_name = "node " + child;
-      var child_element = getElement(depth + 1, util_name, undefined, 
+      var child_element = getElement(depth + 1, util_name, undefined,
                                      "util", num_levels, loader,
-                                     "tsv/" + child + "_util.tsv",
+                                     "tsv/" + child + "_util",
                                      element, util_files[child], true, false);
       element.children.push(child_element);
     });
@@ -515,13 +552,13 @@ function getElement(depth, text, full_text, type, num_levels, loader,
 
   // Util graphs will have processors as their children as well.
   if (type == "util") {
-    // get the children for the util view 
-    var proc_children = getProcessors(text); 
+    // get the children for the util view
+    var proc_children = getProcessors(text);
     proc_children.forEach(function(proc_child) {
       var child_element = getElement(depth + 1, proc_child.text,
-                                     proc_child.full_text, "proc", 
+                                     proc_child.full_text, "proc",
                                      proc_child.height, load_proc_timeline,
-                                     proc_child.tsv, element, undefined, 
+                                     proc_child.tsv, element, undefined,
                                      true, false);
       element.children.push(child_element);
     });
@@ -542,14 +579,14 @@ function calculateLayout() {
     proc_kinds.forEach(function(name) {
       var kind = "(" + get_kind(name) + ")";
       var util_name = "all nodes " + kind;
-      var kind_element = getElement(0, util_name, undefined, "util", 
+      var kind_element = getElement(0, util_name, undefined, "util",
                                      constants.util_levels, load_util,
-                                     "tsv/" + name + "_util.tsv",
+                                     "tsv/" + name + "_util",
                                      undefined, util_files[kind], false, true);
       state.layoutData.push(kind_element);
     });
   }
-  
+
   var seen_nodes = {};
   state.processors.forEach(function(proc) {
     // PROCESSOR:   tag:8 = 0x1d, owner_node:16,   (unused):28, proc_idx: 12
@@ -563,16 +600,16 @@ function calculateLayout() {
 
         proc_kinds.forEach(function(kind) {
           var util_name = "node " + kind;
-          var kind_element = getElement(0, util_name, undefined, "util", 
+          var kind_element = getElement(0, util_name, undefined, "util",
                                          constants.util_levels, load_util,
-                                         "tsv/" + kind + "_util.tsv",
+                                         "tsv/" + kind + "_util",
                                          undefined, util_files[kind],
                                          false, true);
           state.layoutData.push(kind_element);
         });
       }
     } else {
-      state.layoutData.push(getElement(0, proc.text, proc.full_text, "proc", 
+      state.layoutData.push(getElement(0, proc.text, proc.full_text, "proc",
                                        proc.height, load_proc_timeline,
                                        proc.tsv, undefined, undefined,
                                        false, true));
@@ -624,7 +661,7 @@ function addLine(group, x1, x2, y1, y2, color, dashed) {
     .attr("y2", y2)
     .style("stroke", "transparent")
     .style("stroke-width", "20px")
-    .on("mouseover", function() { 
+    .on("mouseover", function() {
       group.append("g")
       .attr("class", "marker")
       .append("path")
@@ -693,7 +730,7 @@ function drawCriticalPath() {
             if (depElems != undefined) {
               var depProc = depElems[0].proc;
               // is the proc visible?
-              if (depProc.visible && depProc.enabled && depProc.loaded) { 
+              if (depProc.visible && depProc.enabled && depProc.loaded) {
                 var depCoords = getElemCoords(depElems);
                 var depX = depCoords.endX;
                 var depY = depCoords.y;
@@ -710,11 +747,11 @@ function drawCriticalPath() {
             var childElems = prof_uid_map[child[2]];
             var childCoords = getElemCoords(childElems);
             if (childElems !== undefined) {
-              if (lastChildCoords === undefined || 
+              if (lastChildCoords === undefined ||
                   childCoords.startX > lastChildCoords.startX) {
                 lastChildCoords = childCoords;
               }
-              if (firstChildCoords === undefined || 
+              if (firstChildCoords === undefined ||
                   childCoords.endX < firstChildCoords.endX) {
                 firstChildCoords = childCoords;
               }
@@ -722,7 +759,7 @@ function drawCriticalPath() {
           }
         });
         if (firstChildCoords !== undefined) {
-          addLine(depGroup, startX, firstChildCoords.startX, 
+          addLine(depGroup, startX, firstChildCoords.startX,
                   y, firstChildCoords.y, "grey", true);
         }
         if (lastChildCoords !== undefined) {
@@ -737,7 +774,7 @@ function drawCriticalPath() {
 function drawDependencies() {
   state.timelineSvg.select("g.dependencies").remove();
   var timelineEvent = state.dependencyEvent;
-  if (timelineEvent == undefined || 
+  if (timelineEvent == undefined ||
       !timelineEvent.proc.visible || !timelineEvent.proc.enabled) {
     return; // don't draw in this case, the src isn't present
   }
@@ -804,7 +841,7 @@ function timelineElementStrokeCalculator(elem) {
 function timelineEventMouseDown(_timelineEvent) {
   // only the first event of this uid will have information
   var timelineEvent = prof_uid_map[_timelineEvent.prof_uid][0];
-  var hasDependencies = ((timelineEvent.in.length != 0) || 
+  var hasDependencies = ((timelineEvent.in.length != 0) ||
                          (timelineEvent.out.length != 0));
 
   if (hasDependencies) {
@@ -881,7 +918,7 @@ function drawTimeline() {
       }
       else return 0.05;
     })
-    .on("mouseout", function(d, i) { 
+    .on("mouseout", function(d, i) {
       if ((d.in.length != 0) || (d.out.length != 0)) {
         d3.select(this).style("cursor", "default");
       }
@@ -896,7 +933,7 @@ function drawTimeline() {
     .attr("class", "timeline")
     .attr("y", timelineTextLevelCalculator)
     .attr("text-anchor", "start")
-    .text(function(d) { 
+    .text(function(d) {
        var sizeRegex = /Size=(.*)/;
        var match = sizeRegex.exec(d.title);
        return match[1];
@@ -908,9 +945,9 @@ function drawTimeline() {
       var boxWidth = endX - startX;
       return boxWidth > textWidth ? "visible" : "hidden";
     })
-    .attr("x", function(d) { 
+    .attr("x", function(d) {
       var textWidth = this.getComputedTextLength();
-      var midPoint = convertToPos(state, d.start + (d.end - d.start) / 2); 
+      var midPoint = convertToPos(state, d.start + (d.end - d.start) / 2);
       midPoint -= textWidth / 2;
       return midPoint
     });
@@ -922,7 +959,11 @@ function drawTimeline() {
 }
 
 function redraw() {
+  // console.trace();
+  console.log("entering redraw");
+  // console.log(state.numLoading);
   if (state.numLoading == 0) {
+
     calculateBases();
     filterAndMergeBlocks(state);
     constants.max_level = calculateVisibileLevels();
@@ -931,6 +972,8 @@ function redraw() {
     drawDependencies();
     drawCriticalPath();
     drawLayout();
+
+    console.log("exiting redraw");
   }
 }
 
@@ -993,21 +1036,27 @@ function calculateBases() {
 }
 
 function expandHandler(elem, index) {
+  console.log("expandhandler");
   elem.expanded = !elem.expanded;
 
   if (elem.expanded) {
+    console.log("expanding");
     function expandChild(child) {
       child.visible = true;
       //child.enabled = true;
       if(!child.loaded) {
-        showLoaderIcon();
-        child.loader(child); // will redraw the timeline once loaded
+        console.log("child not expanded");
+        // showLoaderIcon();
+        child.loader(child, redraw); // will redraw the timeline once loaded
+        // redraw();
       } else if (child.expanded) {
+        console.log("child expanded");
         child.children.forEach(expandChild);
       }
     }
     elem.children.forEach(expandChild);
   } else {
+    console.log("collapsing");
     function collapseChildren(child) {
       child.visible = false;
       child.children.forEach(collapseChildren);
@@ -1024,9 +1073,10 @@ function collapseHandler(d, index) {
 
   if (!d.loaded) {
     // should always be expanding here
-    showLoaderIcon();
+    // showLoaderIcon();
     //var elem = state.flattenedLayoutData[index];
-    d.loader(d); // will redraw the timeline once loaded
+    d.loader(d, redraw); // will redraw the timeline once loaded
+    // redraw();
   } else {
     redraw();
   }
@@ -1066,7 +1116,7 @@ function expandByNodeProc(node, proc) {
   for (var i = 0; i < state.flattenedLayoutData.length; i++) {
     var timelineElement = state.flattenedLayoutData[i];
     if ((timelineElement.full_text != undefined) &&
-        (timelineElement.full_text.indexOf(expectedTitle) !=-1)) {  
+        (timelineElement.full_text.indexOf(expectedTitle) !=-1)) {
       matchedElement = timelineElement;
       break;
     }
@@ -1092,13 +1142,13 @@ function utilLevelCalculator(timelineElement) {
 };
 
 
-function timelineLevelCalculator(timelineEvent) {  
-  return constants.margin_top + 
+function timelineLevelCalculator(timelineEvent) {
+  return constants.margin_top +
          (timelineEvent.proc.base + timelineEvent.level) * state.thickness;
 };
 
-function timelineTextLevelCalculator(timelineEvent) {  
-  return constants.margin_top + 
+function timelineTextLevelCalculator(timelineEvent) {
+  return constants.margin_top +
          (timelineEvent.proc.base + timelineEvent.level + 0.75) * state.thickness;
 };
 
@@ -1130,7 +1180,7 @@ function drawLayout() {
     .attr("x", xCalculator)
     .attr("y", lineLevelCalculator)
     .attr("visibility", function(elem) {
-      return (elem.visible) ? "visible" : "hidden"  
+      return (elem.visible) ? "visible" : "hidden"
     })
     .style("fill", "#000000")
     .style("opacity", function(proc) {
@@ -1164,7 +1214,7 @@ function drawLayout() {
 
         var overlaySvg = d3.select("#overlay").append("svg");
         var descView = overlaySvg.append("g").attr("id", "desc");
-        
+
         var text = descView.append("text")
           .attr("x", x)
           .attr("y", y)
@@ -1218,7 +1268,7 @@ function drawLayout() {
   expand_icons.attr("class", "processor")
     .attr("d", arc)
     .attr("visibility", function(elem) {
-      return (elem.visible) ? "visible" : "hidden"  
+      return (elem.visible) ? "visible" : "hidden"
     })
     .style("fill", "#000000")
     .style("stroke", "#000000")
@@ -1236,7 +1286,7 @@ function drawLayout() {
     } else {
       path.attr("transform", "translate(" + x + ", " + y + ") rotate(30)");
     }
- 
+
   });
 
 
@@ -1264,7 +1314,7 @@ function drawLayout() {
     .attr("x2", state.zoom * state.width)
     .attr("y2", lineLevelCalculator)
     .attr("visibility", function(elem) {
-      return (elem.visible) ? "visible" : "hidden"  
+      return (elem.visible) ? "visible" : "hidden"
     })
     .style("stroke", "#000000")
     .style("stroke-width", "2px")
@@ -1373,17 +1423,17 @@ function drawExpandBox() {
         "<input type='text' placeholder='expand by regex' class='expand-box' style='height: "
         + expandInputHeight + "px; width: "
         + expandInputWidth + "px; font-size: 20pt; font-family: Consolas, monospace;'></input>"
-        + "<div style='margin: 0 auto; margin-top: 10px; text-align: center;'>" 
-          + "<text class='expand-box'>" 
+        + "<div style='margin: 0 auto; margin-top: 10px; text-align: center;'>"
+          + "<text class='expand-box'>"
             + "Presets"
           + "</text>"
         + "</div>"
-        + "<div style='margin: 0 auto; margin-top: 10px; text-align: center;'>" 
-          + "<input class='button' type='button' value='CPUs' onclick='evalExpandRequest(\"CPU\")'></input>" 
-          + "<input class='button' type='button' value='GPUs' onclick='evalExpandRequest(\"GPU\")'></input>" 
-          + "<input class='button' type='button' value='Utilities' onclick='evalExpandRequest(\"Utility\")'></input>" 
-          + "<input class='button' type='button' value='IOs' onclick='evalExpandRequest(\"IO\")'></input>" 
-          + "<input class='button' type='button' value='Memories' onclick='evalExpandRequest(\"Memory\")'></input>" 
+        + "<div style='margin: 0 auto; margin-top: 10px; text-align: center;'>"
+          + "<input class='button' type='button' value='CPUs' onclick='evalExpandRequest(\"CPU\")'></input>"
+          + "<input class='button' type='button' value='GPUs' onclick='evalExpandRequest(\"GPU\")'></input>"
+          + "<input class='button' type='button' value='Utilities' onclick='evalExpandRequest(\"Utility\")'></input>"
+          + "<input class='button' type='button' value='IOs' onclick='evalExpandRequest(\"IO\")'></input>"
+          + "<input class='button' type='button' value='Memories' onclick='evalExpandRequest(\"Memory\")'></input>"
         + "</div>"
         );
   $("input.expand-box").focus();
@@ -1497,9 +1547,48 @@ function updateURL() {
   window.history.replaceState("", "", url);
 }
 
+function scrollLeftByTime(delta) {
+  var windowStart = $("#timeline").scrollLeft();
+  var windowEnd = windowStart + $("#timeline").width();
+  var start_time = convertToTime(state, windowStart) + delta;
+  var end_time = convertToTime(state, windowEnd) + delta;
+  var url = window.location.href.split('?')[0];
+  url += "?start=" + start_time;
+  url += "&end=" + end_time;
+  url += "&collapseAll=" + state.collapseAll;
+  url += "&resolution=" + state.resolution;
+  if (state.searchEnabled)
+    url += "&search=" + searchRegex[currentPos].source;
+  window.history.replaceState("", "", url);
+
+  parseURLParameters();
+}
+
+function scrollToEnd(end) {
+  oldTimes = parseURLStartEnd();
+  var windowStart = $("#timeline").scrollLeft();
+  var windowEnd = windowStart + $("#timeline").width();
+  var start_time = end-oldTimes.end + oldTimes.start;
+  var end_time = end;
+  var url = window.location.href.split('?')[0];
+  url += "?start=" + start_time;
+  url += "&end=" + end_time;
+  url += "&collapseAll=" + state.collapseAll;
+  url += "&resolution=" + state.resolution;
+  if (state.searchEnabled)
+    url += "&search=" + searchRegex[currentPos].source;
+  window.history.replaceState("", "", url);
+
+  parseURLParameters();
+}
+
 function adjustZoom(newZoom, scroll) {
   var prevZoom = state.zoom;
   state.zoom = Math.round(newZoom * 10) / 10;
+
+  if (prevZoom == state.zoom) {
+    return;
+  }
 
   var svg = d3.select("#timeline").select("svg");
 
@@ -1776,10 +1865,16 @@ function defaultKeyUp(e) {
   return true;
 }
 
-function load_proc_timeline(proc) {
+// var all_loaded_procs = new Set();
+
+function load_proc_timeline(proc, callback) {
   var proc_name = proc.full_text;
-  state.processorData[proc_name] = {};
-  d3.tsv(proc.tsv,
+  if (!(proc_name in state.processorData))
+    state.processorData[proc_name] = {};
+  
+  var file_name = proc.tsv + "_" + proc.cur_file_number + ".tsv";
+
+  d3.tsv(file_name,
     function(d, i) {
         var level = +d.level;
         var start = +d.start;
@@ -1808,10 +1903,25 @@ function load_proc_timeline(proc) {
             };
         }
     },
-    function(data) {
+    function(error, data) {
+      if (error) {
+        return;
+      }
       // split profiling items by which level they're on
+      // var num_skipped_elems = 0;
       for(var i = 0; i < data.length; i++) {
         var d = data[i];
+
+        // if (all_loaded_procs.has(d.id)) {
+        //   num_skipped_elems++;
+        //   continue;
+        // }
+          
+        // all_loaded_procs.add(d.id);
+
+        if (d.end > globalLastTime) {
+          globalLastTime = d.end;
+        }
         if (d.level in state.processorData[proc_name]) {
           state.processorData[proc_name][d.level].push(d);
         } else {
@@ -1825,13 +1935,18 @@ function load_proc_timeline(proc) {
           }
         }
       }
+      // console.log(num_skipped_elems);
       proc.loaded = true;
-      hideLoaderIcon();
-      redraw();
+      // hideLoaderIcon();
+      // redraw();
+      callback();
+      proc.cur_file_number++;
+      load_proc_timeline(proc, callback);
     }
   );
 }
 
+// After this function, all elements are loaded.
 function initTimelineElements() {
   var timelineGroup = state.timelineSvg.append("g")
       .attr("id", "timeline");
@@ -1861,7 +1976,7 @@ function initTimelineElements() {
     var util_regex = /node/;
     for (var i = 0; i < state.flattenedLayoutData.length; i++) {
       var timelineElement = state.flattenedLayoutData[i];
-      if (timelineElement.type == "util" && 
+      if (timelineElement.type == "util" &&
           util_regex.exec(timelineElement.text) &&
           timelineElement.depth == 0) {
         collapseHandler(timelineElement, i);
@@ -1869,6 +1984,57 @@ function initTimelineElements() {
     }
   }
   turnOnMouseHandlers();
+  createCheckboxes();
+
+  // setInterval(reload_all_files, 2000);
+
+  // setInterval(function() {
+  //   // console.log("scrolloing");
+  //   scrollLeftByTime(500);
+  // }, 500);
+}
+
+function createCheckboxes() {
+  $('body').prepend('<label><input type="checkbox" id="autoscroll" text="Automatically Scroll"/>Automatically Scroll</label>');
+  $('body').prepend('<label><input type="checkbox" id="refreshfiles" text="Periodically Refresh"/>Periodically Refresh</label>');
+  $('#autoscroll').change(
+    function() {
+      if (this.checked) {
+        intervals.autoscroll = true;
+      } else {
+        intervals.autoscroll = false;
+      }
+    }
+  );
+  $('#refreshfiles').change(
+    function() {
+      if (this.checked) {
+        intervals.reload_all_files = setInterval(reload_all_files, intervals.refresh_rate);
+      } else {
+        clearInterval(intervals.reload_all_files);
+      }
+    }
+  );
+}
+
+function reload_all_files() {
+  for (var i = 0; i < state.flattenedLayoutData.length; i++) {
+
+    console.log(state.flattenedLayoutData[i]);
+    if (state.flattenedLayoutData[i].visible == true) {
+      // showLoaderIcon();
+      state.flattenedLayoutData[i].loader(state.flattenedLayoutData[i], scrollAndRedraw);
+    }
+  }
+}
+
+function scrollAndRedraw() {
+  redraw();
+  if (intervals.autoscroll) {
+    scrollToEnd(globalLastTime);
+    console.log("scrolling");
+  }
+  
 }
 
 
@@ -1877,7 +2043,7 @@ function load_ops_and_timeline() {
     function(d) {
       return d;
     },
-    function(data) { 
+    function(data) {
       data.forEach(function(d) {
         state.operations[parseInt(d.op_id)] = d;
       });
@@ -1915,7 +2081,7 @@ function load_procs(callback) {
       calculateBases();
       drawLayout();
       callback();
-      
+
       // TODO: fix
       load_critical_path();
     }
@@ -1995,7 +2161,7 @@ function filterUtilData(timelineElem) {
   };
 }
 
-function mouseover() { 
+function mouseover() {
   var focus = state.timelineSvg.append("g")
     .attr("class", "focus");
 
@@ -2023,7 +2189,7 @@ function mousemove(d, i) {
   var base_y = +line.getAttribute("base_y");
   var px = d3.mouse(line)[0];
   var py = d3.mouse(line)[1] + base_y;
-  
+
   var start = 0;
   var end = line.getTotalLength();
   var target = undefined;
@@ -2073,38 +2239,67 @@ function mousemove(d, i) {
 }
 
 // Get the data
-function load_util(elem) {
+function load_util(elem, callback) {
   var util_file = elem.tsv;
-
-  // exit early if we already loaded it
-  if(state.utilData[util_file]) {
-    elem.loaded = true;
-    hideLoaderIcon();
-    redraw();
-    return;
+  if (!(util_file in state.utilData)) {
+    state.utilData[util_file] = [];
   }
 
-  d3.tsv(util_file,
-    function(d) {
-        return {
-          time:  +d.time,
-          count: +d.count
-        };
-    },
-    function(error, data) {
-      state.utilData[util_file] = data;
-      elem.loaded = true;
-      hideLoaderIcon();
-      redraw();
-    }
-  );
+  // exit early if we already loaded it
+  // if(state.utilData[util_file]) {
+  //   elem.loaded = true;
+  //   hideLoaderIcon();
+  //   redraw();
+  //   return;
+  // }
+  // while (true) {
+    try {
+      var file_name = util_file + "_" + elem.cur_file_number + ".tsv";
+      d3.tsv(file_name,
+        function(d) {
+            return {
+              time:  +d.time,
+              count: +d.count
+            };
+        },
+        function(error, data) {
+          if (error) {
+            return;
+          }
+          // console.log(data);
+          for(var i = 0; i < data.length; i++) {
+            var d = data[i];
+            if (d.time > globalLastTime) {
+              globalLastTime = d.time;
+            }
+            state.utilData[util_file].push(d);
+          }
+          // console.log(state.utilData[util_file]);
+    
+          // state.utilData[util_file] = data;
+          elem.loaded = true;
+          // hideLoaderIcon();
+          // redraw();
+          
+          callback();
+          elem.cur_file_number++;
+          load_util(elem, callback);
+        }
+      );
+    } catch(err) {
+      // console.log(err);
+      // break;
+    } 
+  // }
+
+  
 }
 
 function load_critical_path() {
   $.getJSON("json/critical_path.json", function(json) {
     state.critical_path = json.map(function(p) {return p.tuple});
     state.critical_path_prof_uids = {};
-    state.critical_path.forEach(function(p) { 
+    state.critical_path.forEach(function(p) {
       state.critical_path_prof_uids[p[2]] = 1;
     });
   });
@@ -2195,7 +2390,7 @@ function load_jsons(callback) {
 }
 
 function main() {
-  load_jsons(initializeState);
+    load_jsons(initializeState);
 }
 
 main();

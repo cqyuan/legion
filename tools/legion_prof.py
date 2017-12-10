@@ -28,6 +28,8 @@ from operator import itemgetter
 from os.path import dirname, exists, basename
 from legion_serializer import LegionProfASCIIDeserializer, LegionProfBinaryDeserializer, GetFileTypeInfo
 
+import time as pytime
+
 # Make sure this is up to date with lowlevel.h
 processor_kinds = {
     1 : 'GPU',
@@ -90,7 +92,7 @@ def get_prof_uid():
     prof_uid_ctr += 1
     return prof_uid_ctr
 
-def data_tsv_str(level, start, end, color, opacity, title, 
+def data_tsv_str(level, start, end, color, opacity, title,
                  initiation, _in, out, children, parents, prof_uid):
     # replace None with ''
     def xstr(s):
@@ -182,7 +184,7 @@ class HasDependencies(object):
         # for critical path analysis
         self.path = PathRange(0, 0, [])
         self.visited = False
-    
+
     def add_initiation_dependencies(self, state, op_dependencies, transitive_map):
         pass
 
@@ -215,7 +217,7 @@ class HasInitiationDependencies(HasDependencies):
             if op.proc is not None:
                 if self.initiation not in op_dependencies:
                     op_dependencies[self.initiation] = {
-                        "in" : set(), 
+                        "in" : set(),
                         "out" : set(),
                         "parents" : set(),
                         "children" : set()
@@ -245,7 +247,7 @@ class HasInitiationDependencies(HasDependencies):
 class HasNoDependencies(HasDependencies):
     def __init__(self):
         HasDependencies.__init__(self)
-    
+
     def add_initiation_dependencies(self, state, op_dependencies, transitive_map):
         pass
 
@@ -313,7 +315,9 @@ class Processor(object):
         self.tasks = list()
         self.max_levels = 0
         self.time_points = list()
+        self.last_time_point = 0
         self.util_time_points = list()
+        self.free_levels = set()
 
     def get_short_text(self):
         return self.kind + " Proc " + str(self.proc_in_node)
@@ -337,8 +341,17 @@ class Processor(object):
         call.proc = self
         self.tasks.append(call)
 
+    def clear_time_range(self):
+        # self.tasks = list()
+        self.time_points = list()
+        self.util_time_points = list()
+
     def sort_time_range(self):
-        for task in self.tasks:
+        for i, task in enumerate(self.tasks):
+            if i < self.last_time_point:
+                continue
+            self.last_time_point += 1
+
             self.time_points.append(TimePoint(task.start, task, True))
             self.time_points.append(TimePoint(task.stop, task, False))
 
@@ -347,24 +360,25 @@ class Processor(object):
             if isinstance(task, HasWaiters):
                 # wait intervals don't count for the util graph
                 for wait_interval in task.wait_intervals:
-                    self.util_time_points.append(TimePoint(wait_interval.start, 
+                    self.util_time_points.append(TimePoint(wait_interval.start,
                                                            task, False))
-                    self.util_time_points.append(TimePoint(wait_interval.end, 
+                    self.util_time_points.append(TimePoint(wait_interval.end,
                                                            task, True))
 
         self.util_time_points.sort(key=lambda p: p.time_key)
         self.time_points.sort(key=lambda p: p.time_key)
-        free_levels = set()
+        # free_levels = set()
+        # self.max_levels = 0
         for point in self.time_points:
             if point.first:
-                if free_levels:
-                    point.thing.set_level(min(free_levels))
-                    free_levels.remove(point.thing.level)
+                if self.free_levels:
+                    point.thing.set_level(min(self.free_levels)) 
+                    self.free_levels.remove(point.thing.level)
                 else:
                     self.max_levels += 1
                     point.thing.set_level(self.max_levels)
             else:
-                free_levels.add(point.thing.level)
+                self.free_levels.add(point.thing.level)
 
     def add_initiation_dependencies(self, state, op_dependencies, transitive_map):
         for point in self.time_points:
@@ -471,8 +485,10 @@ class Memory(object):
         self.capacity = capacity
         self.instances = set()
         self.time_points = list()
-        self.max_live_instances = None
+        self.last_time_point = 0
+        self.max_live_instances = 0
         self.last_time = None
+        self.free_levels = set()
 
     def get_short_text(self):
         return self.kind + " Memory " + str(self.mem_in_node)
@@ -486,28 +502,42 @@ class Memory(object):
         for inst in self.instances:
             if inst.stop is None:
                 inst.stop = last_time
-        self.last_time = last_time 
+        self.last_time = last_time
+
+    def clear_time_range(self):
+        # self.instances = set()
+        self.time_points = list()
 
     def sort_time_range(self):
-        self.max_live_instances = 0
-        for inst in self.instances:
+        # self.max_live_instances = 0
+        for i, inst in enumerate(self.instances):
+            # If we've already parsed this entry, skip it
+            if i < self.last_time_point:
+                continue
+            self.last_time_point += 1
+
+            # If an instance hasn't yet been associated with a time,
+            # skip it for now and populate it later.
+            if inst.start == None:
+                continue
+
             self.time_points.append(TimePoint(inst.start, inst, True))
             self.time_points.append(TimePoint(inst.stop, inst, False))
         # Keep track of which levels are free
         self.time_points.sort(key=lambda p: p.time_key)
-        free_levels = set()
+        # free_levels = set()
         # Iterate over all the points in sorted order
         for point in self.time_points:
             if point.first:
                 # Find a level to assign this to
-                if len(free_levels) > 0:
-                    point.thing.set_level(free_levels.pop())
+                if len(self.free_levels) > 0:
+                    point.thing.set_level(self.free_levels.pop())
                 else:
                     point.thing.set_level(self.max_live_instances + 1)
                     self.max_live_instances += 1
             else:
                 # Finishing this instance so restore its point
-                free_levels.add(point.thing.level)
+                self.free_levels.add(point.thing.level)
 
     def emit_tsv(self, tsv_file, base_level):
         max_levels = self.max_live_instances + 1
@@ -551,20 +581,20 @@ class Memory(object):
             average_usage += usage * float(duration)
             # Update the size
             if point.first:
-                current_size += point.thing.size  
+                current_size += point.thing.size
             else:
                 current_size -= point.thing.size
             # Save the time for the next round through
             previous_time = point.time
         # Last interval is empty so don't worry about it
-        average_usage /= float(self.last_time) 
+        average_usage /= float(self.last_time)
         if average_usage > 0.0 or verbose:
             print(self)
             print("    Total Instances: %d" % len(self.instances))
             print("    Maximum Utilization: %.3f%%" % (100.0 * max_usage))
             print("    Average Utilization: %.3f%%" % (100.0 * average_usage))
             print()
-  
+
     def __repr__(self):
         return '%s Memory %s' % (self.kind, hex(self.mem_id))
 
@@ -577,8 +607,10 @@ class Channel(object):
         self.dst = dst
         self.copies = set()
         self.time_points = list()
-        self.max_live_copies = None 
+        self.last_time_point = 0
+        self.max_live_copies = 0
         self.last_time = None
+        self.free_levels = set()
 
     def get_short_text(self):
         if self.dst is not None:
@@ -595,26 +627,33 @@ class Channel(object):
     def init_time_range(self, last_time):
         self.last_time = last_time
 
+    def clear_time_range(self):
+        # self.copies = set()
+        self.time_points = list()
+
     def sort_time_range(self):
-        self.max_live_copies = 0 
-        for copy in self.copies:
+        # self.max_live_copies = 0
+        for i, copy in enumerate(self.copies):
+            if i < self.last_time_point:
+                continue
+            self.last_time_point += 1
+
             self.time_points.append(TimePoint(copy.start, copy, True))
             self.time_points.append(TimePoint(copy.stop, copy, False))
         # Keep track of which levels are free
         self.time_points.sort(key=lambda p: p.time_key)
-        free_levels = set()
+        # free_levels = set()
         # Iterate over all the points in sorted order
         for point in self.time_points:
             if point.first:
-                if len(free_levels) > 0:
-                    point.thing.level = min(free_levels)
-                    free_levels.remove(point.thing.level)
+                if len(self.free_levels) > 0:
+                    point.thing.level = self.free_levels.pop()
                 else:
                     point.thing.level = self.max_live_copies + 1
                     self.max_live_copies += 1
             else:
                 # Finishing this instance so restore its point
-                free_levels.add(point.thing.level)
+                self.free_levels.add(point.thing.level)
 
     def emit_tsv(self, tsv_file, base_level):
         max_levels = self.max_live_copies + 1
@@ -643,7 +682,7 @@ class Channel(object):
         # return base_level + max_levels
 
     def print_stats(self, verbose):
-        assert self.last_time is not None 
+        assert self.last_time is not None
         total_usage_time = 0
         max_transfers = 0
         current_transfers = 0
@@ -666,7 +705,7 @@ class Channel(object):
             print("    Maximum Executing Transfers: %d" % (max_transfers))
             print("    Average Utilization: %.3f%%" % (100.0 * average_usage))
             print()
-        
+
     def __repr__(self):
         if self.src is None:
             return 'Fill ' + self.dst.__repr__() + ' Channel'
@@ -798,11 +837,13 @@ class Variant(StatObject):
         self.task_kind = task_kind
 
     def compute_color(self, step, num_steps):
-        assert self.color is None
+        if self.color != None:
+            return
         self.color = color_helper(step, num_steps)
 
     def assign_color(self, color):
-        assert self.color is None
+        if self.color != None:
+            return
         self.color = color
 
     def __repr__(self):
@@ -842,7 +883,8 @@ class Operation(Base):
         self.proc = None
 
     def assign_color(self, color_map):
-        assert self.color is None
+        if self.color != None:
+            return
         if self.kind is None:
             self.color = '#000000' # Black
         else:
@@ -1004,8 +1046,9 @@ class Task(Operation, TimeRange, HasDependencies, HasWaiters):
         self.is_task = True
 
     def assign_color(self, color):
-        assert self.color is None
-        assert self.base_op.color is None
+        if self.color != None and self.base_op.color != None:
+            return
+
         assert self.variant is not None
         assert self.variant.color is not None
         self.color = self.variant.color
@@ -1020,7 +1063,7 @@ class Task(Operation, TimeRange, HasDependencies, HasWaiters):
 
     def get_op_id(self):
         return self.op_id
-        
+
     def get_info(self):
         info = '<'+str(self.op_id)+">"
         return info
@@ -1271,7 +1314,7 @@ class DepPart(Base, TimeRange, HasInitiationDependencies):
         assert self.chan is not None
         cur_level = self.chan.max_live_copies+1 - self.level
         return (str(self.chan), self.prof_uid)
-        
+
     def emit_tsv(self, tsv_file, base_level, max_levels, level):
         deppart_name = repr(self)
         _in = json.dumps(self.deps["in"]) if len(self.deps["in"]) > 0 else ""
@@ -1377,7 +1420,8 @@ class MessageKind(StatObject):
         return self.message_id == other.message_id
 
     def assign_color(self, color):
-        assert self.color is None
+        if self.color != None:
+            return
         self.color = color
 
     def __repr__(self):
@@ -1437,7 +1481,8 @@ class MapperCallKind(StatObject):
         return self.name
 
     def assign_color(self, color):
-        assert self.color is None
+        if self.color != None:
+            return
         self.color = color
 
 class MapperCall(Base, TimeRange, HasInitiationDependencies):
@@ -1502,7 +1547,8 @@ class RuntimeCallKind(StatObject):
         return self.runtime_call_kind == other.runtime_call_kind
 
     def assign_color(self, color):
-        assert self.color is None
+        if self.color != None:
+            return
         self.color = color
 
     def __repr__(self):
@@ -1584,7 +1630,7 @@ class LFSR(object):
 
     def get_max_value(self):
         return self.max_value
-        
+
     def get_next(self):
         xor = 0
         for t in self.taps:
@@ -1665,6 +1711,7 @@ class StatGatherer(object):
 
 class State(object):
     def __init__(self):
+        self.cur_file_number = 0
         self.processors = {}
         self.memories = {}
         self.channels = {}
@@ -1687,6 +1734,7 @@ class State(object):
         self.instances = {}
         self.has_spy_data = False
         self.spy_state = None
+        self.last_line = 0
         self.callbacks = {
             "MessageDesc": self.log_message_desc,
             "MapperCallDesc": self.log_mapper_call_desc,
@@ -1713,7 +1761,7 @@ class State(object):
             "MessageInfo": self.log_message_info,
             "MapperCallInfo": self.log_mapper_call_info,
             "RuntimeCallInfo": self.log_runtime_call_info,
-            "ProfTaskInfo": self.log_proftask_info
+            "ProfTaskInfo": self.log_proftask_info,
             #"UserInfo": self.log_user_info
         }
 
@@ -1726,7 +1774,7 @@ class State(object):
         proc = self.find_processor(proc_id)
         proc.add_task(task)
 
-    def log_meta_info(self, op_id, lg_id, proc_id, 
+    def log_meta_info(self, op_id, lg_id, proc_id,
                       create, ready, start, stop):
         op = self.find_op(op_id)
         variant = self.find_meta_variant(lg_id)
@@ -1778,7 +1826,7 @@ class State(object):
         inst.start = create
         inst.stop = destroy
         if destroy > self.last_time:
-            self.last_time = destroy 
+            self.last_time = destroy
 
     def log_partition_info(self, op_id, part_op, create, ready, start, stop):
         op = self.find_op(op_id)
@@ -1794,7 +1842,7 @@ class State(object):
         user.start = start
         user.stop = stop
         if stop > self.last_time:
-            self.last_time = stop 
+            self.last_time = stop
         proc.add_task(user)
 
     def log_task_wait_info(self, op_id, task_id, variant_id, wait_start, wait_ready, wait_end):
@@ -1877,7 +1925,7 @@ class State(object):
 
     def log_message_desc(self, kind, name):
         if kind not in self.message_kinds:
-            self.message_kinds[kind] = MessageKind(kind, name) 
+            self.message_kinds[kind] = MessageKind(kind, name)
 
     def log_message_info(self, kind, proc_id, start, stop):
         assert start <= stop
@@ -1897,7 +1945,7 @@ class State(object):
         assert kind in self.mapper_call_kinds
         # For now we'll only add very expensive mapper calls (more than 100 us)
         if (stop - start) < 100:
-            return 
+            return
         if stop > self.last_time:
             self.last_time = stop
         call = MapperCall(self.mapper_call_kinds[kind],
@@ -1912,7 +1960,7 @@ class State(object):
             self.runtime_call_kinds[kind] = RuntimeCallKind(kind, name)
 
     def log_runtime_call_info(self, kind, proc_id, start, stop):
-        assert start <= stop 
+        assert start <= stop
         assert kind in self.runtime_call_kinds
         if stop > self.last_time:
             self.last_time = stop
@@ -1921,9 +1969,9 @@ class State(object):
         proc.add_runtime_call(call)
 
     def log_proftask_info(self, proc_id, op_id, start, stop):
-        # we don't have a unique op_id for the profiling task itself, so we don't 
+        # we don't have a unique op_id for the profiling task itself, so we don't
         # add to self.operations
-        proftask = ProfTask(Operation(op_id), start, start, start, stop) 
+        proftask = ProfTask(Operation(op_id), start, start, start, stop)
         proc = self.find_processor(proc_id)
         proc.add_task(proftask)
 
@@ -1968,7 +2016,7 @@ class State(object):
 
     def find_op(self, op_id):
         if op_id not in self.operations:
-            op = Operation(op_id) 
+            op = Operation(op_id)
             self.operations[op_id] = op
             # update prof_uid map
             self.prof_uid_map[op.prof_uid] = op
@@ -1982,7 +2030,7 @@ class State(object):
             assert ready is not None
             assert start is not None
             assert stop is not None
-            task = Task(variant, task, create, ready, start, stop) 
+            task = Task(variant, task, create, ready, start, stop)
             variant.op[op_id] = task
             self.operations[op_id] = task
             # update prof_uid map
@@ -2035,7 +2083,7 @@ class State(object):
         return user
 
     def sort_time_ranges(self):
-        assert self.last_time is not None 
+        assert self.last_time is not None
         # Processors first
         for proc in self.processors.itervalues():
             proc.last_time = self.last_time
@@ -2046,6 +2094,14 @@ class State(object):
         for channel in self.channels.itervalues():
             channel.init_time_range(self.last_time)
             channel.sort_time_range()
+
+    def clear_time_ranges(self):
+        for proc in self.processors.itervalues():
+            proc.clear_time_range()
+        for mem in self.memories.itervalues():
+            mem.clear_time_range()
+        for channel in self.channels.itervalues():
+            channel.clear_time_range()
 
     def print_processor_stats(self, verbose):
         print('****************************************************')
@@ -2186,7 +2242,7 @@ class State(object):
         # (time, count) pair.
 
         assert len(owners) > 0
-        
+
         isMemory = False
         max_count = 0
         if isinstance(owners[0], Memory):
@@ -2326,6 +2382,7 @@ class State(object):
             json.dump(stats_structure, json_file)
 
         # here we write out the actual tsv stats files
+        file_ext = "_util_{}.tsv".format(self.cur_file_number)
         for tp_group in timepoints_dict:
             timepoints = timepoints_dict[tp_group]
             utilizations = [self.convert_to_utilization(tp, tp[0].thing.get_owner())
@@ -2344,10 +2401,10 @@ class State(object):
             else:
                 utilization = self.calculate_utilization_data(sorted(itertools.chain(*utilizations)), owners)
 
-            util_tsv_filename = os.path.join(output_dirname, "tsv", str(tp_group) + "_util.tsv")
+            util_tsv_filename = os.path.join(output_dirname, "tsv", str(tp_group) + file_ext)
             with open(util_tsv_filename, "w") as util_tsv_file:
                 util_tsv_file.write("time\tcount\n")
-                util_tsv_file.write("0.00\t0.00\n") # initial point
+                # util_tsv_file.write("0.00\t0.00\n") # initial point
                 for util_point in utilization:
                     util_tsv_file.write("%.2f\t%.2f\n" % util_point)
 
@@ -2389,11 +2446,11 @@ class State(object):
                                                 for op in op_dependencies[op_id][_dir]]
                     # flatMap
                     if len(transformed_dependencies) > 0:
-                        simplified_dependencies = reduce(list.__add__, 
+                        simplified_dependencies = reduce(list.__add__,
                                                          transformed_dependencies)
                     else:
                         simplified_dependencies = []
-                    
+
                     op_dependencies[op_id][_dir] = set(simplified_dependencies)
                 else:
                     op_dependencies[op_id][_dir] = set()
@@ -2421,14 +2478,14 @@ class State(object):
                 _slice = self.spy_state.slice_slice[_slice]
             if index.uid not in op_dependencies:
                 op_dependencies[index.uid] = {
-                    "in" : set(), 
+                    "in" : set(),
                     "out" : set(),
                     "parents" : set(),
                     "children" : set()
                 }
             if _slice not in op_dependencies:
                 op_dependencies[_slice] = {
-                    "in" : set(), 
+                    "in" : set(),
                     "out" : set(),
                     "parents" : set(),
                     "children" : set()
@@ -2439,14 +2496,14 @@ class State(object):
         for _slice1, _slice2 in self.spy_state.slice_slice.iteritems():
             if _slice1 not in op_dependencies:
                 op_dependencies[_slice1] = {
-                    "in" : set(), 
+                    "in" : set(),
                     "out" : set(),
                     "parents" : set(),
                     "children" : set()
                 }
             if _slice2 not in op_dependencies:
                 op_dependencies[_slice2] = {
-                    "in" : set(), 
+                    "in" : set(),
                     "out" : set(),
                     "parents" : set(),
                     "children" : set()
@@ -2459,14 +2516,14 @@ class State(object):
                 _slice = self.spy_state.slice_slice[_slice]
             if _slice not in op_dependencies:
                 op_dependencies[_slice] = {
-                    "in" : set(), 
+                    "in" : set(),
                     "out" : set(),
                     "parents" : set(),
                     "children" : set()
                 }
             if point.op.uid not in op_dependencies:
                 op_dependencies[point.op.uid] = {
-                    "in" : set(), 
+                    "in" : set(),
                     "out" : set(),
                     "parents" : set(),
                     "children" : set()
@@ -2490,7 +2547,7 @@ class State(object):
         except:
             print("Error remove temp.dot file")
 
-        op.print_event_graph(printer, elevate, all_nodes, True) 
+        op.print_event_graph(printer, elevate, all_nodes, True)
         # Now print the edges at the very end
         for node in all_nodes:
             if hasattr(node, 'uid'):
@@ -2498,14 +2555,14 @@ class State(object):
                     if hasattr(src, 'uid'):
                         if src.uid not in op_dependencies:
                             op_dependencies[src.uid] = {
-                                "in" : set(), 
+                                "in" : set(),
                                 "out" : set(),
                                 "parents" : set(),
                                 "children" : set()
                             }
                         if node.uid not in op_dependencies:
                             op_dependencies[node.uid] = {
-                                "in" : set(), 
+                                "in" : set(),
                                 "out" : set(),
                                 "parents" : set(),
                                 "children" : set()
@@ -2521,14 +2578,14 @@ class State(object):
                 parent_uid = op.context.op.uid
                 if child_uid not in op_dependencies:
                     op_dependencies[child_uid] = {
-                        "in" : set(), 
+                        "in" : set(),
                         "out" : set(),
                         "parents" : set(),
                         "children" : set()
                     }
                 if parent_uid not in op_dependencies:
                     op_dependencies[parent_uid] = {
-                    "in" : set(), 
+                    "in" : set(),
                     "out" : set(),
                     "parents" : set(),
                     "children" : set()
@@ -2560,7 +2617,7 @@ class State(object):
                         return self.find_op(elem).get_unique_tuple()
                     else:
                         return elem
-                op_dependencies[op_id][_dir] = set(map(convert_to_tuple, 
+                op_dependencies[op_id][_dir] = set(map(convert_to_tuple,
                                                    op_dependencies[op_id][_dir]))
 
     def add_initiation_dependencies(self, state, op_dependencies, transitive_map):
@@ -2656,22 +2713,41 @@ class State(object):
             simplified_critical_path.add(p.get_unique_tuple())
         return list(simplified_critical_path)
 
+    def output_files_and_reset_memory(self):
+        # Once we are done loading everything, do the sorting
+        self.sort_time_ranges()
+
+        if self.should_print_stats:
+            self.print_stats(verbose)
+        else:
+            # state.emit_interactive_visualization(output_dirname, show_procs,
+            #                      file_names, show_channels, show_instances, force)
+            self.emit_interactive_visualization(self.output_dirname, self.should_show_procs,
+                                    self.file_names, self.should_show_channels, self.should_show_instances, False)
+            if self.should_show_copy_matrix:
+                self.show_copy_matrix(self.copy_output_prefix)
+
+        self.clear_time_ranges()
+        # raw_input()
 
     def emit_interactive_visualization(self, output_dirname, show_procs,
                                file_names, show_channels, show_instances, force):
         self.assign_colors()
-        # the output directory will either be overwritten, or we will find
-        # a new unique name to create new logs
-        if force and exists(output_dirname):
-            print("forcing removal of " + output_dirname)
-            shutil.rmtree(output_dirname)
-        else:
-            output_dirname = self.find_unique_dirname(output_dirname)
+	
+        should_increment = False
+        for p, proc in self.processors.iteritems():
+            if len(proc.tasks) > 0:
+                should_increment = True
+        for c, chan in self.channels.iteritems():
+            if len(chan.copies) > 0:
+                should_increment = True
+        for m, mem in self.memories.iteritems():
+            if len(mem.instances) > 0:
+                should_increment = True
 
-        print('Generating interactive visualization files in directory ' + output_dirname)
-        src_directory = os.path.join(dirname(sys.argv[0]), "legion_prof_files")
-
-        shutil.copytree(src_directory, output_dirname)
+        if should_increment:
+            self.cur_file_number += 1
+            print("incrementing cur_file_no to: {}".format(self.cur_file_number))
 
         proc_list = []
         chan_list = []
@@ -2682,26 +2758,27 @@ class State(object):
         base_level = 0
         last_time = 0
 
-        ops_file_name = os.path.join(output_dirname, 
+        ops_file_name = os.path.join(output_dirname,
                                      "legion_prof_ops.tsv")
-        data_tsv_file_name = os.path.join(output_dirname, 
+        data_tsv_file_name = os.path.join(output_dirname,
                                           "legion_prof_data.tsv")
-        processor_tsv_file_name = os.path.join(output_dirname, 
+        processor_tsv_file_name = os.path.join(output_dirname,
                                                "legion_prof_processor.tsv")
 
-        scale_json_file_name = os.path.join(output_dirname, "json", 
+        scale_json_file_name = os.path.join(output_dirname, "json",
                                             "scale.json")
-        dep_json_file_name = os.path.join(output_dirname, "json", 
+        dep_json_file_name = os.path.join(output_dirname, "json",
                                           "op_dependencies.json")
 
         data_tsv_header = "level\tstart\tend\tcolor\topacity\ttitle\tinitiation\tin\tout\tchildren\tparents\tprof_uid\n"
 
         tsv_dir = os.path.join(output_dirname, "tsv")
         json_dir = os.path.join(output_dirname, "json")
-        os.mkdir(tsv_dir)
+        if not exists(tsv_dir):
+            os.mkdir(tsv_dir)
         if not exists(json_dir):
             os.mkdir(json_dir)
-        
+
         op_dependencies, transitive_map = None, None
         if self.has_spy_data:
             op_dependencies, transitive_map = self.get_op_dependencies(file_names)
@@ -2714,12 +2791,15 @@ class State(object):
         for op_id, operation in self.operations.iteritems():
             proc = ""
             level = ""
-            if (operation.proc is not None):
+            if (operation.proc is not None and operation.level is not None):
                 proc = repr(operation.proc)
                 level = str(operation.level+1)
             ops_file.write("%d\t%s\t%s\t%s\n" % \
                             (op_id, str(operation), proc, level))
         ops_file.close()
+
+        file_ext = "_{}.tsv".format(self.cur_file_number)
+        
 
         if show_procs:
             for proc in self.processors.itervalues():
@@ -2734,14 +2814,14 @@ class State(object):
                         proc.attach_dependencies(self, op_dependencies,
                                                  transitive_map)
                     proc_name = slugify("Proc_" + str(hex(p)))
-                    proc_tsv_file_name = os.path.join(tsv_dir, proc_name + ".tsv")
+                    proc_tsv_file_name = os.path.join(tsv_dir, proc_name + file_ext)
                     with open(proc_tsv_file_name, "w") as proc_tsv_file:
                         proc_tsv_file.write(data_tsv_header)
                         proc_level = proc.emit_tsv(proc_tsv_file, 0)
                     base_level += proc_level
                     processor_levels[proc] = {
-                        'levels': proc_level-1, 
-                        'tsv': "tsv/" + proc_name + ".tsv"
+                        'levels': proc_level-1,
+                        'tsv': "tsv/" + proc_name 
                     }
                     proc_list.append(proc)
 
@@ -2750,14 +2830,14 @@ class State(object):
             for c,chan in sorted(self.channels.iteritems(), key=lambda x: x[1]):
                 if len(chan.copies) > 0:
                     chan_name = slugify(str(c))
-                    chan_tsv_file_name = os.path.join(tsv_dir, chan_name + ".tsv")
+                    chan_tsv_file_name = os.path.join(tsv_dir, chan_name + file_ext)
                     with open(chan_tsv_file_name, "w") as chan_tsv_file:
                         chan_tsv_file.write(data_tsv_header)
                         chan_level = chan.emit_tsv(chan_tsv_file, 0)
                     base_level += chan_level
                     channel_levels[chan] = {
-                        'levels': chan_level-1, 
-                        'tsv': "tsv/" + chan_name + ".tsv"
+                        'levels': chan_level-1,
+                        'tsv': "tsv/" + chan_name 
                     }
                     chan_list.append(chan)
 
@@ -2766,14 +2846,14 @@ class State(object):
             for m,mem in sorted(self.memories.iteritems(), key=lambda x: x[1]):
                 if len(mem.instances) > 0:
                     mem_name = slugify("Mem_" + str(hex(m)))
-                    mem_tsv_file_name = os.path.join(tsv_dir, mem_name + ".tsv")
-                    with open(mem_tsv_file_name, "w") as mem_tsv_file: 
+                    mem_tsv_file_name = os.path.join(tsv_dir, mem_name + file_ext)
+                    with open(mem_tsv_file_name, "w") as mem_tsv_file:
                         mem_tsv_file.write(data_tsv_header)
                         mem_level = mem.emit_tsv(mem_tsv_file, 0)
                     base_level += mem_level
                     memory_levels[mem] = {
-                        'levels': mem_level-1, 
-                        'tsv': "tsv/" + mem_name + ".tsv"
+                        'levels': mem_level-1,
+                        'tsv': "tsv/" + mem_name 
                     }
                     mem_list.append(mem)
 
@@ -2798,19 +2878,19 @@ class State(object):
             for proc in sorted(proc_list):
                 tsv = processor_levels[proc]['tsv']
                 levels = processor_levels[proc]['levels']
-                processor_tsv_file.write("%s\t%s\t%s\t%d\n" % 
+                processor_tsv_file.write("%s\t%s\t%s\t%d\n" %
                                 (repr(proc), proc.get_short_text(), tsv, levels))
         if show_channels:
             for channel in sorted(chan_list):
                 tsv = channel_levels[channel]['tsv']
                 levels = channel_levels[channel]['levels']
-                processor_tsv_file.write("%s\t%s\t%s\t%d\n" % 
+                processor_tsv_file.write("%s\t%s\t%s\t%d\n" %
                                 (repr(channel), channel.get_short_text(), tsv, levels))
         if show_instances:
             for memory in sorted(mem_list):
                 tsv = memory_levels[memory]['tsv']
                 levels = memory_levels[memory]['levels']
-                processor_tsv_file.write("%s\t%s\t%s\t%d\n" % 
+                processor_tsv_file.write("%s\t%s\t%s\t%d\n" %
                                 (repr(memory), memory.get_short_text(), tsv, levels))
         processor_tsv_file.close()
 
@@ -2826,6 +2906,22 @@ class State(object):
 
         with open(scale_json_file_name, "w") as scale_json_file:
             json.dump(scale_data, scale_json_file)
+
+    def copy_viz_files(self, output_dirname, force):
+        # the output directory will either be overwritten, or we will find
+        # a new unique name to create new logs
+        if force and exists(output_dirname):
+            print("forcing removal of " + output_dirname)
+            shutil.rmtree(output_dirname)
+        else:
+            output_dirname = self.find_unique_dirname(output_dirname)
+
+        print('Generating interactive visualization files in directory ' + output_dirname)
+        src_directory = os.path.join(dirname(sys.argv[0]), "legion_prof_files")
+
+        shutil.copytree(src_directory, output_dirname)
+
+
 
 def main():
     class MyParser(argparse.ArgumentParser):
@@ -2861,6 +2957,8 @@ def main():
         help='input Legion Prof log filenames')
     args = parser.parse_args()
 
+    state = State()
+
     file_names = args.filenames
     show_all = not args.show_copy_matrix
     show_procs = show_all
@@ -2873,7 +2971,19 @@ def main():
     print_stats = args.print_stats
     verbose = args.verbose
 
-    state = State()
+    state.file_names = args.filenames
+    state.show_all = not args.show_copy_matrix
+    state.should_show_procs = show_all
+    state.should_show_channels = show_all
+    state.should_show_instances = show_all
+    state.should_show_copy_matrix = args.show_copy_matrix
+    state.force = args.force
+    state.output_dirname = args.output
+    state.copy_output_prefix = output_dirname + "_copy"
+    state.should_print_stats = args.print_stats
+    state.verbose = args.verbose
+
+    
     has_matches = False
     has_binary_files = False # true if any of the files are a binary file
 
@@ -2886,41 +2996,42 @@ def main():
             has_binary_files = True
             break
 
-    for file_name in file_names:
-        deserializer = None
-        file_type, version = GetFileTypeInfo(file_name)
-        if file_type == "binary":
-            deserializer = binaryDeserializer
-        else:
-            deserializer = asciiDeserializer
-        if has_binary_files == False or file_type == "binary":
-            # only parse the log if it's a binary file, or if all the files
-            # are ascii files
-            print('Reading log file %s...' % file_name)
-            total_matches = deserializer.parse(file_name, verbose)
-            print('Matched %s objects' % total_matches)
-            if total_matches > 0:
-                has_matches = True
-        else:
-            # In this case, we have an ascii file passed in but we also have
-            # binary files. All we need to do is check if it has legion spy
-            # data
-            deserializer.search_for_spy_data(file_name)
 
-    if not has_matches:
-        print('No matches found! Exiting...')
-        return
+    # Set up files for the visualizer
+    if not print_stats:
+        state.copy_viz_files(output_dirname, True)
 
-    # Once we are done loading everything, do the sorting
-    state.sort_time_ranges()
+    while (True):
+        for file_name in file_names:
+            deserializer = None
+            file_type, version = GetFileTypeInfo(file_name)
+            if file_type == "binary":
+                deserializer = binaryDeserializer
+            else:
+                deserializer = asciiDeserializer
+            if has_binary_files == False or file_type == "binary":
+                # only parse the log if it's a binary file, or if all the files
+                # are ascii files
+                print('Reading log file %s...' % file_name)
+                total_matches = deserializer.parse(file_name, verbose)
+                print('Matched %s objects' % total_matches)
+                if total_matches > 0:
+                    has_matches = True
+            else:
+                # In this case, we have an ascii file passed in but we also have
+                # binary files. All we need to do is check if it has legion spy
+                # data
+                deserializer.search_for_spy_data(file_name)
 
-    if print_stats:
-        state.print_stats(verbose)
-    else:
-        state.emit_interactive_visualization(output_dirname, show_procs,
-                             file_names, show_channels, show_instances, force)
-        if show_copy_matrix:
-            state.show_copy_matrix(copy_output_prefix)
+        if not has_matches:
+            print('No matches found! Exiting...')
+            return
+
+        
+
+        pytime.sleep(90)
+        # raw_input()
+        print("looped through once")
 
 if __name__ == '__main__':
     start = time.time()
