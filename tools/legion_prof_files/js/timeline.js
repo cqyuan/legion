@@ -1922,6 +1922,7 @@ function load_proc_timeline(proc, callback) {
 
         if (d.end > globalLastTime) {
           globalLastTime = d.end;
+          constants.end = globalLastTime;
         }
         if (d.level in state.processorData[proc_name]) {
           state.processorData[proc_name][d.level].push(d);
@@ -2273,6 +2274,7 @@ function load_util(elem, callback) {
             var d = data[i];
             if (d.time > globalLastTime) {
               globalLastTime = d.time;
+              constants.end = globalLastTime;
             }
             state.utilData[util_file].push(d);
           }
