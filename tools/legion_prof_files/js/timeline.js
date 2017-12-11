@@ -35,7 +35,7 @@ var globalLastTime = 0;
 var intervals = {
   refreshfiles: null,
   autoscroll: null,
-  refresh_rate: 10000 // in milliseconds
+  refresh_rate: 3000 // in milliseconds
 };
 
 String.prototype.hashCode = function() {

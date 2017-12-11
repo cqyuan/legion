@@ -3030,7 +3030,7 @@ def main():
 
         
 
-        pytime.sleep(10)
+        pytime.sleep(3)
         # raw_input()
         print("looped through once")
 
