@@ -35,7 +35,7 @@ var globalLastTime = 0;
 var intervals = {
   refreshfiles: null,
   autoscroll: null,
-  refresh_rate: 2000 // in milliseconds
+  refresh_rate: 10000 // in milliseconds
 };
 
 String.prototype.hashCode = function() {
@@ -1865,12 +1865,14 @@ function defaultKeyUp(e) {
   return true;
 }
 
-var all_loaded_procs = new Set();
-
 function load_proc_timeline(proc, callback) {
   var proc_name = proc.full_text;
   if (!(proc_name in state.processorData))
     state.processorData[proc_name] = {};
+
+  if (!('last_loaded_id' in proc)) {
+    proc.last_loaded_id = 0;
+  }
   
   // var file_name = proc.tsv + "_" + proc.cur_file_number + ".tsv";
   var file_name = proc.tsv + "_1.tsv";
@@ -1905,20 +1907,24 @@ function load_proc_timeline(proc, callback) {
         }
     },
     function(error, data) {
-      if (error) {
-        return;
-      }
+      // if (error) {
+      //   return;
+      // }
       // split profiling items by which level they're on
-      // var num_skipped_elems = 0;
-      for(var i = 0; i < data.length; i++) {
+      var num_skipped_elems = 0;
+      var num_elems = 0;
+      for(var i = proc.last_loaded_id; i < data.length; i++) {
         var d = data[i];
 
-        if (all_loaded_procs.has(d.id)) {
-          // num_skipped_elems++;
-          continue;
-        }
+        // num_elems++;
+        // if (all_loaded_procs.has(d.id)) {
+        //   num_skipped_elems++;
+        //   continue;
+        // }
           
-        all_loaded_procs.add(d.id);
+        // all_loaded_procs.add(d.id);
+
+        proc.last_loaded_id++;
 
         if (d.end > globalLastTime) {
           globalLastTime = d.end;
@@ -1937,7 +1943,8 @@ function load_proc_timeline(proc, callback) {
           }
         }
       }
-      // console.log(num_skipped_elems);
+      console.log("Skipped: " + num_skipped_elems);
+      console.log("Total processed: " + num_elems);
       proc.loaded = true;
       // hideLoaderIcon();
       // redraw();
