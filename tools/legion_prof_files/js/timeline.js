@@ -2282,19 +2282,19 @@ function load_util(elem, callback) {
           if (error) {
             return;
           }
-          // console.log(data);
-          for(var i = elem.last_loaded_id; i < data.length; i++) {
-            elem.last_loaded_id++;
-            var d = data[i];
-            if (d.time > globalLastTime) {
-              globalLastTime = d.time;
-              constants.end = globalLastTime;
-            }
-            state.utilData[util_file].push(d);
-          }
-          // console.log(state.utilData[util_file]);
+
+          // for(var i = elem.last_loaded_id; i < data.length; i++) {
+          //   elem.last_loaded_id++;
+          //   var d = data[i];
+          //   if (d.time > globalLastTime) {
+          //     globalLastTime = d.time;
+          //     constants.end = globalLastTime;
+          //   }
+          //   state.utilData[util_file].push(d);
+          // }
+
     
-          // state.utilData[util_file] = data;
+          state.utilData[util_file] = data;
           elem.loaded = true;
           // hideLoaderIcon();
           // redraw();
