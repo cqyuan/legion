@@ -2255,6 +2255,10 @@ function load_util(elem, callback) {
     state.utilData[util_file] = [];
   }
 
+  if (!('last_loaded_id' in elem)) {
+    elem.last_loaded_id = 0;
+  }
+
   // exit early if we already loaded it
   // if(state.utilData[util_file]) {
   //   elem.loaded = true;
@@ -2278,7 +2282,8 @@ function load_util(elem, callback) {
             return;
           }
           // console.log(data);
-          for(var i = 0; i < data.length; i++) {
+          for(var i = elem.last_loaded_id; i < data.length; i++) {
+            elem.last_loaded_id++;
             var d = data[i];
             if (d.time > globalLastTime) {
               globalLastTime = d.time;
