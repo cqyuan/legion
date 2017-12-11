@@ -2152,6 +2152,7 @@ function filterUtilData(timelineElem) {
     if ((endX - startX) >= resolution || i == (endIndex - 2)) {
       var totalTime = endTime - startTime;
       elem.count /= totalTime;
+      elem.count = Math.min(1, elem.count);
       //avgElem.time /= windowSize;
       elem.time = startTime;
       newData.push(elem);
