@@ -32,6 +32,7 @@ var timeBisector = d3.bisector(function(d) { return d.time; }).left;
 
 var globalLastTime = 0;
 
+/* Stores global state related to the live timeline. */
 var intervals = {
   refreshfiles: null,
   autoscroll: null,
@@ -959,11 +960,7 @@ function drawTimeline() {
 }
 
 function redraw() {
-  // console.trace();
-  console.log("entering redraw");
-  // console.log(state.numLoading);
   if (state.numLoading == 0) {
-
     calculateBases();
     filterAndMergeBlocks(state);
     constants.max_level = calculateVisibileLevels();
@@ -972,8 +969,6 @@ function redraw() {
     drawDependencies();
     drawCriticalPath();
     drawLayout();
-
-    console.log("exiting redraw");
   }
 }
 
@@ -1073,10 +1068,7 @@ function collapseHandler(d, index) {
 
   if (!d.loaded) {
     // should always be expanding here
-    // showLoaderIcon();
-    //var elem = state.flattenedLayoutData[index];
     d.loader(d, redraw); // will redraw the timeline once loaded
-    // redraw();
   } else {
     redraw();
   }
@@ -1547,23 +1539,6 @@ function updateURL() {
   window.history.replaceState("", "", url);
 }
 
-function scrollLeftByTime(delta) {
-  var windowStart = $("#timeline").scrollLeft();
-  var windowEnd = windowStart + $("#timeline").width();
-  var start_time = convertToTime(state, windowStart) + delta;
-  var end_time = convertToTime(state, windowEnd) + delta;
-  var url = window.location.href.split('?')[0];
-  url += "?start=" + start_time;
-  url += "&end=" + end_time;
-  url += "&collapseAll=" + state.collapseAll;
-  url += "&resolution=" + state.resolution;
-  if (state.searchEnabled)
-    url += "&search=" + searchRegex[currentPos].source;
-  window.history.replaceState("", "", url);
-
-  parseURLParameters();
-}
-
 function scrollToEnd(end) {
   oldTimes = parseURLStartEnd();
   var windowStart = $("#timeline").scrollLeft();
@@ -1907,23 +1882,10 @@ function load_proc_timeline(proc, callback) {
         }
     },
     function(error, data) {
-      // if (error) {
-      //   return;
-      // }
-      // split profiling items by which level they're on
       var num_skipped_elems = 0;
       var num_elems = 0;
       for(var i = proc.last_loaded_id; i < data.length; i++) {
         var d = data[i];
-
-        // num_elems++;
-        // if (all_loaded_procs.has(d.id)) {
-        //   num_skipped_elems++;
-        //   continue;
-        // }
-          
-        // all_loaded_procs.add(d.id);
-
         proc.last_loaded_id++;
 
         if (d.end > globalLastTime) {
@@ -1946,11 +1908,8 @@ function load_proc_timeline(proc, callback) {
       console.log("Skipped: " + num_skipped_elems);
       console.log("Total processed: " + num_elems);
       proc.loaded = true;
-      // hideLoaderIcon();
-      // redraw();
       callback();
       proc.cur_file_number++;
-      // load_proc_timeline(proc, callback);
     }
   );
 }
@@ -1994,13 +1953,6 @@ function initTimelineElements() {
   }
   turnOnMouseHandlers();
   createCheckboxes();
-
-  // setInterval(reload_all_files, 2000);
-
-  // setInterval(function() {
-  //   // console.log("scrolloing");
-  //   scrollLeftByTime(500);
-  // }, 500);
 }
 
 function createCheckboxes() {
@@ -2028,10 +1980,8 @@ function createCheckboxes() {
 
 function reload_all_files() {
   for (var i = 0; i < state.flattenedLayoutData.length; i++) {
-
     console.log(state.flattenedLayoutData[i]);
     if (state.flattenedLayoutData[i].visible == true) {
-      // showLoaderIcon();
       state.flattenedLayoutData[i].loader(state.flattenedLayoutData[i], scrollAndRedraw);
     }
   }
@@ -2260,15 +2210,7 @@ function load_util(elem, callback) {
     elem.last_loaded_id = 0;
   }
 
-  // exit early if we already loaded it
-  // if(state.utilData[util_file]) {
-  //   elem.loaded = true;
-  //   hideLoaderIcon();
-  //   redraw();
-  //   return;
-  // }
-  // while (true) {
-    try {
+  try {
       // var file_name = util_file + "_" + elem.cur_file_number + ".tsv";
       var file_name = util_file + "_1.tsv";
       d3.tsv(file_name,
@@ -2282,35 +2224,14 @@ function load_util(elem, callback) {
           if (error) {
             return;
           }
-
-          // for(var i = elem.last_loaded_id; i < data.length; i++) {
-          //   elem.last_loaded_id++;
-          //   var d = data[i];
-          //   if (d.time > globalLastTime) {
-          //     globalLastTime = d.time;
-          //     constants.end = globalLastTime;
-          //   }
-          //   state.utilData[util_file].push(d);
-          // }
-
-    
           state.utilData[util_file] = data;
           elem.loaded = true;
-          // hideLoaderIcon();
-          // redraw();
-          
           callback();
           elem.cur_file_number++;
-          // load_util(elem, callback);
         }
       );
     } catch(err) {
-      // console.log(err);
-      // break;
     } 
-  // }
-
-  
 }
 
 function load_critical_path() {
