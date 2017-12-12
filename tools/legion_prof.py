@@ -2095,6 +2095,8 @@ class State(object):
             channel.init_time_range(self.last_time)
             channel.sort_time_range()
 
+    # This function clears the state associated with all processors, 
+    # memories, and channels. 
     def clear_time_ranges(self):
         for proc in self.processors.itervalues():
             proc.clear_time_range()
@@ -2713,6 +2715,7 @@ class State(object):
             simplified_critical_path.add(p.get_unique_tuple())
         return list(simplified_critical_path)
 
+    # Outputs the events that are currently in memory. 
     def output_files_and_reset_memory(self):
         # Once we are done loading everything, do the sorting
         self.sort_time_ranges()
@@ -2720,34 +2723,19 @@ class State(object):
         if self.should_print_stats:
             self.print_stats(verbose)
         else:
-            # state.emit_interactive_visualization(output_dirname, show_procs,
-            #                      file_names, show_channels, show_instances, force)
             self.emit_interactive_visualization(self.output_dirname, self.should_show_procs,
                                     self.file_names, self.should_show_channels, self.should_show_instances, False)
             if self.should_show_copy_matrix:
                 self.show_copy_matrix(self.copy_output_prefix)
 
-        self.clear_time_ranges()
-        # raw_input()
+        # We are currently NOT clearing global memory, so the next line is
+        # commented out. 
+        # self.clear_time_ranges()
 
     def emit_interactive_visualization(self, output_dirname, show_procs,
                                file_names, show_channels, show_instances, force):
         self.assign_colors()
-	
-        should_increment = False
-        for p, proc in self.processors.iteritems():
-            if len(proc.tasks) > 0:
-                should_increment = True
-        for c, chan in self.channels.iteritems():
-            if len(chan.copies) > 0:
-                should_increment = True
-        for m, mem in self.memories.iteritems():
-            if len(mem.instances) > 0:
-                should_increment = True
-
-        if should_increment:
-            self.cur_file_number += 1
-            print("incrementing cur_file_no to: {}".format(self.cur_file_number))
+        self.cur_file_number = 1
 
         proc_list = []
         chan_list = []
@@ -2907,6 +2895,8 @@ class State(object):
         with open(scale_json_file_name, "w") as scale_json_file:
             json.dump(scale_data, scale_json_file)
 
+    # Initial setup for the visualization files. Will create a new directory
+    # if the user sets force to True. 
     def copy_viz_files(self, output_dirname, force):
         # the output directory will either be overwritten, or we will find
         # a new unique name to create new logs
@@ -2921,7 +2911,31 @@ class State(object):
 
         shutil.copytree(src_directory, output_dirname)
 
+def full_parse(file_names, asciiDeserializer, binaryDeserializer):
+    for file_name in file_names:
+        deserializer = None
+        file_type, version = GetFileTypeInfo(file_name)
+        if file_type == "binary":
+            deserializer = binaryDeserializer
+        else:
+            deserializer = asciiDeserializer
+        if has_binary_files == False or file_type == "binary":
+            # only parse the log if it's a binary file, or if all the files
+            # are ascii files
+            print('Reading log file %s...' % file_name)
+            total_matches = deserializer.parse(file_name, verbose)
+            print('Matched %s objects' % total_matches)
+            if total_matches > 0:
+                has_matches = True
+        else:
+            # In this case, we have an ascii file passed in but we also have
+            # binary files. All we need to do is check if it has legion spy
+            # data
+            deserializer.search_for_spy_data(file_name)
 
+    if not has_matches:
+        print('No matches found! Exiting...')
+        return
 
 def main():
     class MyParser(argparse.ArgumentParser):
@@ -2953,6 +2967,9 @@ def main():
         '-f', '--force', dest='force', action='store_true',
         help='overwrite output directory if it exists')
     parser.add_argument(
+        '-l', '--live', dest='live', action='store_true', 
+        help='Turn on live logging and live visualization.')
+    parser.add_argument(
         dest='filenames', nargs='+',
         help='input Legion Prof log filenames')
     args = parser.parse_args()
@@ -2970,6 +2987,7 @@ def main():
     copy_output_prefix = output_dirname + "_copy"
     print_stats = args.print_stats
     verbose = args.verbose
+    live = args.live
 
     state.file_names = args.filenames
     state.show_all = not args.show_copy_matrix
@@ -2999,39 +3017,14 @@ def main():
 
     # Set up files for the visualizer
     if not print_stats:
-        state.copy_viz_files(output_dirname, True)
+        state.copy_viz_files(output_dirname, force)
 
-    while (True):
-        for file_name in file_names:
-            deserializer = None
-            file_type, version = GetFileTypeInfo(file_name)
-            if file_type == "binary":
-                deserializer = binaryDeserializer
-            else:
-                deserializer = asciiDeserializer
-            if has_binary_files == False or file_type == "binary":
-                # only parse the log if it's a binary file, or if all the files
-                # are ascii files
-                print('Reading log file %s...' % file_name)
-                total_matches = deserializer.parse(file_name, verbose)
-                print('Matched %s objects' % total_matches)
-                if total_matches > 0:
-                    has_matches = True
-            else:
-                # In this case, we have an ascii file passed in but we also have
-                # binary files. All we need to do is check if it has legion spy
-                # data
-                deserializer.search_for_spy_data(file_name)
-
-        if not has_matches:
-            print('No matches found! Exiting...')
-            return
-
-        
-
-        pytime.sleep(90)
-        # raw_input()
-        print("looped through once")
+    if live:
+        while (True):
+            full_parse(file_names, asciiDeserializer, binaryDeserializer)
+            pytime.sleep(3)
+    else:
+        return full_parse(file_names, asciiDeserializer, binaryDeserializer)
 
 if __name__ == '__main__':
     start = time.time()
