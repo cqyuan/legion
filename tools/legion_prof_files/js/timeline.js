@@ -1990,7 +1990,7 @@ function reload_all_files() {
 function scrollAndRedraw() {
   redraw();
   state.scale = state.width / (constants.end - constants.start); // update state so timeline can keep scrolling
-  if (intervals.autoscroll) {
+  if (intervals.autoscroll === true) {
     scrollToEnd(globalLastTime);
     console.log("scrolling");
   }
