@@ -2911,7 +2911,7 @@ class State(object):
 
         shutil.copytree(src_directory, output_dirname)
 
-def full_parse(file_names):
+def full_parse(file_names, state):
     has_matches = False
     has_binary_files = False # true if any of the files are a binary file
 
@@ -3022,10 +3022,10 @@ def main():
 
     if live:
         while (True):
-            full_parse(file_names)
+            full_parse(file_names, state)
             pytime.sleep(3)
     else:
-        return full_parse(file_names)
+        return full_parse(file_names, state)
 
 if __name__ == '__main__':
     start = time.time()
