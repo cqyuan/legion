@@ -2910,6 +2910,7 @@ class State(object):
         src_directory = os.path.join(dirname(sys.argv[0]), "legion_prof_files")
 
         shutil.copytree(src_directory, output_dirname)
+    return output_dirname
 
 def full_parse(file_names, state, verbose):
     has_matches = False
@@ -3018,7 +3019,8 @@ def main():
 
     # Set up files for the visualizer
     if not print_stats:
-        state.copy_viz_files(output_dirname, force)
+        output_dirname = state.copy_viz_files(output_dirname, force)
+        state.output_dirname = output_dirname
 
     if live:
         while (True):
