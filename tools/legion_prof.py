@@ -2910,7 +2910,7 @@ class State(object):
         src_directory = os.path.join(dirname(sys.argv[0]), "legion_prof_files")
 
         shutil.copytree(src_directory, output_dirname)
-    return output_dirname
+        return output_dirname
 
 def full_parse(file_names, state, verbose):
     has_matches = False
