@@ -2911,7 +2911,18 @@ class State(object):
 
         shutil.copytree(src_directory, output_dirname)
 
-def full_parse(file_names, asciiDeserializer, binaryDeserializer):
+def full_parse(file_names):
+    has_matches = False
+    has_binary_files = False # true if any of the files are a binary file
+
+    asciiDeserializer = LegionProfASCIIDeserializer(state, state.callbacks)
+    binaryDeserializer = LegionProfBinaryDeserializer(state, state.callbacks)
+
+    for file_name in file_names:
+        file_type, version = GetFileTypeInfo(file_name)
+        if file_type == "binary":
+            has_binary_files = True
+            break
     for file_name in file_names:
         deserializer = None
         file_type, version = GetFileTypeInfo(file_name)
@@ -3002,17 +3013,7 @@ def main():
     state.verbose = args.verbose
 
     
-    has_matches = False
-    has_binary_files = False # true if any of the files are a binary file
-
-    asciiDeserializer = LegionProfASCIIDeserializer(state, state.callbacks)
-    binaryDeserializer = LegionProfBinaryDeserializer(state, state.callbacks)
-
-    for file_name in file_names:
-        file_type, version = GetFileTypeInfo(file_name)
-        if file_type == "binary":
-            has_binary_files = True
-            break
+    
 
 
     # Set up files for the visualizer
@@ -3021,10 +3022,10 @@ def main():
 
     if live:
         while (True):
-            full_parse(file_names, asciiDeserializer, binaryDeserializer)
+            full_parse(file_names)
             pytime.sleep(3)
     else:
-        return full_parse(file_names, asciiDeserializer, binaryDeserializer)
+        return full_parse(file_names)
 
 if __name__ == '__main__':
     start = time.time()
